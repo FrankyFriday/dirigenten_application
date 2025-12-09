@@ -7,6 +7,8 @@ environment:
   sdk: ">=2.18.0 <4.0.0"
 
 dependencies:
+  audioplayers: ^3.0.1
+  lottie: ^2.3.0
   flutter:
     sdk: flutter
   shared_preferences: ^2.0.15
