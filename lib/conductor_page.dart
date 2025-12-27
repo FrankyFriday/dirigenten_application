@@ -12,9 +12,22 @@ class ConductorPage extends StatefulWidget {
   State<ConductorPage> createState() => _ConductorPageState();
 }
 
+// ================= CLIENT INFO =================
+class ClientInfo {
+  final WebSocket socket;
+  final String instrument;
+  final String voice;
+
+  ClientInfo({
+    required this.socket,
+    required this.instrument,
+    required this.voice,
+  });
+}
+
 class _ConductorPageState extends State<ConductorPage> {
   HttpServer? _wsServer;
-  final List<WebSocket> _clients = [];
+  final List<ClientInfo> _clients = [];
 
   bool _serverRunning = false;
   String _serverStatus = 'Server nicht gestartet';
@@ -38,6 +51,7 @@ class _ConductorPageState extends State<ConductorPage> {
     setState(fn);
   }
 
+  // ================= LADEN LOKALER STÜCKE =================
   Future<void> _loadLocalPieces() async {
     _safeSetState(() => _loadingPieces = true);
 
@@ -70,6 +84,7 @@ class _ConductorPageState extends State<ConductorPage> {
     debugPrint('Gefundene Noten: ${_localPieces.map((f) => f.path).join(', ')}');
   }
 
+  // ================= SERVER START =================
   Future<void> _startWsServer() async {
     final port = int.tryParse(_portController.text) ?? 4040;
 
@@ -96,23 +111,26 @@ class _ConductorPageState extends State<ConductorPage> {
     }
   }
 
+  // ================= CLIENT HANDLING =================
   void _handleClient(WebSocket socket) {
-    _clients.add(socket);
-    _safeSetState(() => _serverStatus = 'Client verbunden (${_clients.length})');
-
     socket.listen((data) {
       try {
         final map = jsonDecode(data as String);
         if (map['type'] == 'register') {
+          final instrument = map['instrument'] as String? ?? '';
+          final voice = map['voice'] as String? ?? '';
+          _clients.add(ClientInfo(socket: socket, instrument: instrument, voice: voice));
+          _safeSetState(() => _serverStatus = 'Client verbunden (${_clients.length})');
           debugPrint("Registriert: $map");
         }
       } catch (_) {}
     }, onDone: () {
-      _clients.remove(socket);
+      _clients.removeWhere((c) => c.socket == socket);
       _safeSetState(() => _serverStatus = 'Client getrennt (${_clients.length})');
     });
   }
 
+  // ================= UDP BROADCAST =================
   Future<void> _startBroadcast(int port) async {
     final ip = await _getLocalIp();
     if (ip == null) return;
@@ -150,17 +168,17 @@ class _ConductorPageState extends State<ConductorPage> {
     return null;
   }
 
+  // ================= SERVER STOP =================
   Future<void> _stopWsServer() async {
     for (var c in _clients) {
       try {
-        c.add(jsonEncode({'type': 'status', 'text': 'Dirigent beendet'}));
-        await c.close();
+        c.socket.add(jsonEncode({'type': 'status', 'text': 'Dirigent beendet'}));
+        await c.socket.close();
       } catch (_) {}
     }
     _clients.clear();
 
     await _wsServer?.close(force: true);
-
     _broadcastTimer?.cancel();
     _udpSocket?.close();
 
@@ -173,32 +191,35 @@ class _ConductorPageState extends State<ConductorPage> {
   Future<void> _stopWsServerWithoutSetState() async {
     for (var c in _clients) {
       try {
-        c.add(jsonEncode({'type': 'status', 'text': 'Dirigent beendet'}));
-        await c.close();
+        c.socket.add(jsonEncode({'type': 'status', 'text': 'Dirigent beendet'}));
+        await c.socket.close();
       } catch (_) {}
     }
     _clients.clear();
-
     await _wsServer?.close(force: true);
-
     _broadcastTimer?.cancel();
     _udpSocket?.close();
   }
 
-  Future<void> _sendPiece(File f) async {
+  // ================= PIECE SENDING =================
+  Future<void> _sendPiece(File f, {String? targetInstrument, String? targetVoice}) async {
     final bytes = await f.readAsBytes();
     final msg = jsonEncode({
       'type': 'send_piece',
       'name': f.uri.pathSegments.last,
       'data': base64Encode(bytes),
-      'instrument': null,
-      'voice': null,
+      'instrument': targetInstrument,
+      'voice': targetVoice,
     });
 
-    for (var c in _clients) {
-      try {
-        c.add(msg);
-      } catch (_) {}
+    for (var client in _clients) {
+      if (targetInstrument != null && targetVoice != null) {
+        if (client.instrument == targetInstrument && client.voice == targetVoice) {
+          client.socket.add(msg);
+        }
+      } else {
+        client.socket.add(msg);
+      }
     }
 
     ScaffoldMessenger.of(context).showSnackBar(
@@ -210,22 +231,18 @@ class _ConductorPageState extends State<ConductorPage> {
   void dispose() {
     _broadcastTimer?.cancel();
     _udpSocket?.close();
-
     _stopWsServerWithoutSetState();
-
     _portController.dispose();
     _homeUrlController.dispose();
     super.dispose();
   }
 
-  // ===================== Neue Logik für gruppierte Stücke =====================
+  // ================= STÜCKE GRUPPIEREN =================
   List<PieceGroup> _groupLocalPieces() {
     final Map<String, List<String>> map = {};
 
     for (var file in _localPieces) {
       final fileName = file.uri.pathSegments.last;
-
-      // Annahme: Dateiname = "Stueck_Instrument_Stimme.pdf"
       final parts = fileName.replaceAll('.pdf', '').split('_');
       if (parts.length >= 3) {
         final pieceName = parts[0];
@@ -241,45 +258,67 @@ class _ConductorPageState extends State<ConductorPage> {
         .toList();
   }
 
+  // ================= BUILD =================
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-
     final groupedPieces = _groupLocalPieces();
 
     return Scaffold(
+      backgroundColor: Colors.grey[50],
       appBar: AppBar(
-        title: const Text('Dirigent'),
+        title: const Text('Dirigent Dashboard'),
         centerTitle: true,
-        backgroundColor: theme.colorScheme.primary,
         elevation: 4,
+        backgroundColor: Colors.deepPurple.shade700,
       ),
       body: Padding(
         padding: const EdgeInsets.all(20),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
+            // Server Status
             Text(
-              'Status:',
-              style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
-            ),
-            const SizedBox(height: 4),
-            Container(
-              padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 16),
-              decoration: BoxDecoration(
-                color: _serverRunning ? Colors.green.shade100 : Colors.red.shade100,
-                borderRadius: BorderRadius.circular(12),
+              'Server Status',
+              style: theme.textTheme.titleMedium?.copyWith(
+                fontWeight: FontWeight.bold,
+                color: Colors.deepPurple.shade900,
               ),
-              child: Text(
-                _serverStatus,
-                style: theme.textTheme.bodyMedium?.copyWith(
-                  color: _serverRunning ? Colors.green.shade800 : Colors.red.shade800,
-                  fontWeight: FontWeight.w600,
+            ),
+            const SizedBox(height: 8),
+            Container(
+              padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
+              decoration: BoxDecoration(
+                color: _serverRunning ? Colors.green.shade50 : Colors.red.shade50,
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(
+                  color: _serverRunning ? Colors.green : Colors.red,
+                  width: 1.5,
                 ),
+              ),
+              child: Row(
+                children: [
+                  Icon(
+                    _serverRunning ? Icons.cloud_done : Icons.cloud_off,
+                    color: _serverRunning ? Colors.green.shade700 : Colors.red.shade700,
+                    size: 28,
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Text(
+                      _serverStatus,
+                      style: theme.textTheme.bodyMedium?.copyWith(
+                        color: _serverRunning ? Colors.green.shade900 : Colors.red.shade900,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                ],
               ),
             ),
             const SizedBox(height: 16),
 
+            // Server Controls
             Row(
               children: [
                 Expanded(
@@ -289,7 +328,13 @@ class _ConductorPageState extends State<ConductorPage> {
                     keyboardType: TextInputType.number,
                     decoration: InputDecoration(
                       labelText: 'WebSocket Port',
-                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                      labelStyle: TextStyle(color: Colors.deepPurple.shade700),
+                      filled: true,
+                      fillColor: Colors.deepPurple.shade50.withOpacity(0.3),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(14),
+                        borderSide: BorderSide.none,
+                      ),
                       contentPadding: const EdgeInsets.symmetric(vertical: 14, horizontal: 16),
                     ),
                   ),
@@ -299,12 +344,15 @@ class _ConductorPageState extends State<ConductorPage> {
                   flex: 2,
                   child: ElevatedButton.icon(
                     onPressed: _serverRunning ? _stopWsServer : _startWsServer,
-                    icon: Icon(_serverRunning ? Icons.stop_circle : Icons.play_circle_fill, size: 28),
-                    label: Text(_serverRunning ? 'Stoppen' : 'Starten', style: const TextStyle(fontSize: 18)),
+                    icon: Icon(_serverRunning ? Icons.stop_circle : Icons.play_circle_fill, size: 26),
+                    label: Text(
+                      _serverRunning ? 'Stoppen' : 'Starten',
+                      style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                    ),
                     style: ElevatedButton.styleFrom(
                       padding: const EdgeInsets.symmetric(vertical: 14),
                       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-                      backgroundColor: _serverRunning ? Colors.red : theme.colorScheme.primary,
+                      backgroundColor: _serverRunning ? Colors.redAccent : Colors.deepPurple.shade700,
                     ),
                   ),
                 ),
@@ -312,9 +360,13 @@ class _ConductorPageState extends State<ConductorPage> {
             ),
             const SizedBox(height: 28),
 
+            // Lokale Noten
             Text(
               'Lokale Noten',
-              style: theme.textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.bold),
+              style: theme.textTheme.headlineSmall?.copyWith(
+                fontWeight: FontWeight.bold,
+                color: Colors.deepPurple.shade900,
+              ),
             ),
             const SizedBox(height: 12),
 
@@ -333,15 +385,16 @@ class _ConductorPageState extends State<ConductorPage> {
                           separatorBuilder: (_, __) => const SizedBox(height: 10),
                           itemBuilder: (_, i) {
                             final group = groupedPieces[i];
-
                             return Card(
-                              elevation: 4,
-                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                              elevation: 5,
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+                              color: Colors.white,
+                              shadowColor: Colors.deepPurple.shade100,
                               child: ListTile(
                                 contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                                 leading: CircleAvatar(
                                   radius: 28,
-                                  backgroundColor: Colors.deepPurple.shade100,
+                                  backgroundColor: Colors.deepPurple.shade50,
                                   child: const Icon(Icons.picture_as_pdf, color: Colors.deepPurple, size: 32),
                                 ),
                                 title: Text(
@@ -350,22 +403,32 @@ class _ConductorPageState extends State<ConductorPage> {
                                 ),
                                 subtitle: Text(
                                   group.instrumentsAndVoices.join(', '),
-                                  style: const TextStyle(fontSize: 14, color: Colors.black54),
+                                  style: const TextStyle(fontSize: 14, color: Colors.black87),
                                 ),
-                                trailing: IconButton(
-                                  icon: const Icon(Icons.send, color: Colors.deepPurple),
-                                  tooltip: 'Noten senden',
+                                trailing: ElevatedButton.icon(
                                   onPressed: () {
-                                    // Alle zugehörigen Dateien senden
                                     for (var iv in group.instrumentsAndVoices) {
-                                      final fileName = "${group.name}_${iv.replaceAll(' ', '_')}.pdf";
+                                      final parts = iv.split(' ');
+                                      if (parts.length < 2) continue;
+                                      final instrument = parts[0];
+                                      final voice = parts[1];
+
+                                      final fileName = "${group.name}_${instrument}_${voice}.pdf";
                                       final file = _localPieces.firstWhere(
                                         (f) => f.uri.pathSegments.last == fileName,
-                                        orElse: () => null as File,
+                                        orElse: () => File(''),
                                       );
-                                      if (file != null) _sendPiece(file);
+                                      if (file.existsSync()) {
+                                        _sendPiece(file, targetInstrument: instrument, targetVoice: voice);
+                                      }
                                     }
                                   },
+                                  icon: const Icon(Icons.send, color: Colors.white),
+                                  label: const Text('Senden', style: TextStyle(color: Colors.white)),
+                                  style: ElevatedButton.styleFrom(
+                                    backgroundColor: Colors.deepPurple.shade700,
+                                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                                  ),
                                 ),
                               ),
                             );
@@ -379,7 +442,7 @@ class _ConductorPageState extends State<ConductorPage> {
   }
 }
 
-// Hilfsklasse für gruppierte Stücke
+// ================= PIECE GROUP =================
 class PieceGroup {
   final String name;
   final List<String> instrumentsAndVoices;
