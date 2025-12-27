@@ -1,4 +1,6 @@
+# =========================
 # Miscellaneous
+# =========================
 *.class
 *.log
 *.pyc
@@ -12,34 +14,72 @@
 .swiftpm/
 migrate_working_dir/
 
-# IntelliJ related
+# =========================
+# IntelliJ / Android Studio
+# =========================
 *.iml
 *.ipr
 *.iws
 .idea/
 
-# The .vscode folder contains launch configuration and tasks you configure in
-# VS Code which you may wish to be included in version control, so this line
-# is commented out by default.
-#.vscode/
+# =========================
+# VS Code
+# =========================
+.vscode/
 
-# Flutter/Dart/Pub related
-**/doc/api/
-**/ios/Flutter/.last_build_id
+# =========================
+# Flutter / Dart
+# =========================
 .dart_tool/
+.flutter-plugins
 .flutter-plugins-dependencies
 .pub-cache/
 .pub/
-/build/
-/coverage/
+build/
+coverage/
+**/doc/api/
+**/ios/Flutter/.last_build_id
 
-# Symbolication related
-app.*.symbols
-
-# Obfuscation related
-app.*.map.json
-
-# Android Studio will place build artifacts here
+# =========================
+# Android build outputs
+# =========================
 /android/app/debug
 /android/app/profile
 /android/app/release
+
+# =========================
+# iOS
+# =========================
+ios/Pods/
+ios/.symlinks/
+ios/Flutter/Flutter.framework
+ios/Flutter/App.framework
+
+# =========================
+# Obfuscation / Symbols
+# =========================
+app.*.symbols
+app.*.map.json
+
+# =========================
+# ENV / Secrets
+# =========================
+.env
+.env.*
+assets/.env
+
+# =========================
+# Docker / Nextcloud
+# =========================
+docker-compose.override.yml
+docker-stack.yml
+data/
+db_data/
+nextcloud_data/
+nextcloud_db_data/
+volumes/
+
+# =========================
+# Logs
+# =========================
+*.log
