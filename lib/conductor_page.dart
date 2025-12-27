@@ -27,18 +27,19 @@ class ClientInfo {
 
 class _ConductorPageState extends State<ConductorPage> {
   HttpServer? _wsServer;
-  final List<ClientInfo> _clients = [];
+  final Map<String, ClientInfo> _clientMap = {}; // key: socket.hashCode.toString()
 
   bool _serverRunning = false;
   String _serverStatus = 'Server nicht gestartet';
   List<File> _localPieces = [];
+  List<PieceGroup> _cachedPieceGroups = [];
   RawDatagramSocket? _udpSocket;
   Timer? _broadcastTimer;
 
   final _portController = TextEditingController(text: '4041');
-  final _homeUrlController = TextEditingController();
-
   bool _loadingPieces = false;
+
+  PieceGroup? _currentPiece;
 
   @override
   void initState() {
@@ -55,38 +56,35 @@ class _ConductorPageState extends State<ConductorPage> {
   Future<void> _loadLocalPieces() async {
     _safeSetState(() => _loadingPieces = true);
 
-    Directory dir;
-
     if (kIsWeb) {
       _localPieces = [];
+      _cachedPieceGroups = _groupLocalPieces();
       _safeSetState(() => _loadingPieces = false);
       return;
-    } else if (Platform.isAndroid || Platform.isIOS) {
+    }
+
+    Directory dir;
+    if (Platform.isAndroid || Platform.isIOS) {
       dir = await getApplicationDocumentsDirectory();
     } else {
       dir = Directory(r'C:\TestNoten');
-      if (!await dir.exists()) {
-        await dir.create(recursive: true);
-      }
+      if (!await dir.exists()) await dir.create(recursive: true);
     }
 
-    final list = dir
-        .listSync()
-        .whereType<File>()
-        .where((f) => f.path.toLowerCase().endsWith('.pdf'))
-        .toList();
+    final list = <File>[];
+    await for (var f in dir.list(recursive: false, followLinks: false)) {
+      if (f is File && f.path.toLowerCase().endsWith('.pdf')) list.add(f);
+    }
 
-    _safeSetState(() {
-      _localPieces = list;
-      _loadingPieces = false;
-    });
+    _localPieces = list;
+    _cachedPieceGroups = _groupLocalPieces();
 
-    debugPrint('Gefundene Noten: ${_localPieces.map((f) => f.path).join(', ')}');
+    _safeSetState(() => _loadingPieces = false);
   }
 
   // ================= SERVER START =================
   Future<void> _startWsServer() async {
-    final port = int.tryParse(_portController.text) ?? 4040;
+    final port = int.tryParse(_portController.text) ?? 4041;
 
     try {
       _wsServer = await HttpServer.bind(InternetAddress.anyIPv4, port);
@@ -113,20 +111,23 @@ class _ConductorPageState extends State<ConductorPage> {
 
   // ================= CLIENT HANDLING =================
   void _handleClient(WebSocket socket) {
+    final key = socket.hashCode.toString();
     socket.listen((data) {
       try {
         final map = jsonDecode(data as String);
         if (map['type'] == 'register') {
-          final instrument = map['instrument'] as String? ?? '';
-          final voice = map['voice'] as String? ?? '';
-          _clients.add(ClientInfo(socket: socket, instrument: instrument, voice: voice));
-          _safeSetState(() => _serverStatus = 'Client verbunden (${_clients.length})');
-          debugPrint("Registriert: $map");
+          final client = ClientInfo(
+            socket: socket,
+            instrument: map['instrument'] ?? '',
+            voice: map['voice'] ?? '',
+          );
+          _clientMap[key] = client;
+          _safeSetState(() => _serverStatus = 'Client verbunden (${_clientMap.length})');
         }
       } catch (_) {}
     }, onDone: () {
-      _clients.removeWhere((c) => c.socket == socket);
-      _safeSetState(() => _serverStatus = 'Client getrennt (${_clients.length})');
+      _clientMap.remove(key);
+      _safeSetState(() => _serverStatus = 'Client getrennt (${_clientMap.length})');
     });
   }
 
@@ -145,22 +146,19 @@ class _ConductorPageState extends State<ConductorPage> {
     });
 
     _broadcastTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (!_serverRunning) return;
       _udpSocket!.send(
         utf8.encode(msg),
         InternetAddress("255.255.255.255"),
         4210,
       );
     });
-
-    debugPrint("Conductor Broadcast aktiv → $msg");
   }
 
   Future<String?> _getLocalIp() async {
     for (var iface in await NetworkInterface.list()) {
       for (var addr in iface.addresses) {
-        if (addr.type == InternetAddressType.IPv4 &&
-            !addr.isLoopback &&
-            addr.address.startsWith("192.")) {
+        if (addr.type == InternetAddressType.IPv4 && !addr.isLoopback) {
           return addr.address;
         }
       }
@@ -170,13 +168,13 @@ class _ConductorPageState extends State<ConductorPage> {
 
   // ================= SERVER STOP =================
   Future<void> _stopWsServer() async {
-    for (var c in _clients) {
+    for (var c in _clientMap.values) {
       try {
         c.socket.add(jsonEncode({'type': 'status', 'text': 'Dirigent beendet'}));
         await c.socket.close();
       } catch (_) {}
     }
-    _clients.clear();
+    _clientMap.clear();
 
     await _wsServer?.close(force: true);
     _broadcastTimer?.cancel();
@@ -185,24 +183,16 @@ class _ConductorPageState extends State<ConductorPage> {
     _safeSetState(() {
       _serverRunning = false;
       _serverStatus = 'Server gestoppt';
+      _currentPiece = null;
     });
   }
 
-  Future<void> _stopWsServerWithoutSetState() async {
-    for (var c in _clients) {
-      try {
-        c.socket.add(jsonEncode({'type': 'status', 'text': 'Dirigent beendet'}));
-        await c.socket.close();
-      } catch (_) {}
-    }
-    _clients.clear();
-    await _wsServer?.close(force: true);
-    _broadcastTimer?.cancel();
-    _udpSocket?.close();
-  }
-
   // ================= PIECE SENDING =================
-  Future<void> _sendPiece(File f, {String? targetInstrument, String? targetVoice}) async {
+  Future<void> _sendPiece(File f, {String? targetInstrument, String? targetVoice, PieceGroup? pieceGroup}) async {
+    if (pieceGroup != null) {
+      _safeSetState(() => _currentPiece = pieceGroup);
+    }
+
     final bytes = await f.readAsBytes();
     final msg = jsonEncode({
       'type': 'send_piece',
@@ -212,35 +202,41 @@ class _ConductorPageState extends State<ConductorPage> {
       'voice': targetVoice,
     });
 
-    for (var client in _clients) {
-      if (targetInstrument != null && targetVoice != null) {
-        if (client.instrument == targetInstrument && client.voice == targetVoice) {
-          client.socket.add(msg);
-        }
-      } else {
-        client.socket.add(msg);
-      }
+    final clients = _clientMap.values.where((c) =>
+        targetInstrument == null ||
+        targetVoice == null ||
+        (c.instrument == targetInstrument && c.voice == targetVoice));
+
+    for (var client in clients) {
+      client.socket.add(msg);
     }
 
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('Noten gesendet: ${f.uri.pathSegments.last}')),
-    );
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Noten gesendet: ${f.uri.pathSegments.last}')),
+      );
+    }
   }
 
-  @override
-  void dispose() {
-    _broadcastTimer?.cancel();
-    _udpSocket?.close();
-    _stopWsServerWithoutSetState();
-    _portController.dispose();
-    _homeUrlController.dispose();
-    super.dispose();
+  // ================= END CURRENT PIECE =================
+  void _sendEndPiece() {
+    if (_currentPiece == null) return;
+
+    final msg = jsonEncode({
+      'type': 'end_piece',
+      'name': _currentPiece!.name,
+    });
+
+    for (var c in _clientMap.values) {
+      c.socket.add(msg);
+    }
+
+    _safeSetState(() => _currentPiece = null);
   }
 
-  // ================= STÜCKE GRUPPIEREN =================
+  // ================= PIECE GROUP =================
   List<PieceGroup> _groupLocalPieces() {
     final Map<String, List<String>> map = {};
-
     for (var file in _localPieces) {
       final fileName = file.uri.pathSegments.last;
       final parts = fileName.replaceAll('.pdf', '').split('_');
@@ -252,7 +248,6 @@ class _ConductorPageState extends State<ConductorPage> {
         map.putIfAbsent(fileName.replaceAll('.pdf', ''), () => []).add("Unbekannt");
       }
     }
-
     return map.entries
         .map((e) => PieceGroup(name: e.key, instrumentsAndVoices: e.value))
         .toList();
@@ -262,7 +257,7 @@ class _ConductorPageState extends State<ConductorPage> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final groupedPieces = _groupLocalPieces();
+    final groupedPieces = _cachedPieceGroups;
 
     return Scaffold(
       backgroundColor: Colors.grey[50],
@@ -358,6 +353,18 @@ class _ConductorPageState extends State<ConductorPage> {
                 ),
               ],
             ),
+            const SizedBox(height: 16),
+
+            // Stück zu Ende Button
+            ElevatedButton.icon(
+              onPressed: _currentPiece == null ? null : _sendEndPiece,
+              icon: const Icon(Icons.stop_circle, color: Colors.white),
+              label: const Text('Stück zu Ende', style: TextStyle(color: Colors.white)),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.redAccent,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+              ),
+            ),
             const SizedBox(height: 28),
 
             // Lokale Noten
@@ -407,6 +414,7 @@ class _ConductorPageState extends State<ConductorPage> {
                                 ),
                                 trailing: ElevatedButton.icon(
                                   onPressed: () {
+                                    _safeSetState(() => _currentPiece = group); // Stück setzen
                                     for (var iv in group.instrumentsAndVoices) {
                                       final parts = iv.split(' ');
                                       if (parts.length < 2) continue;
@@ -439,6 +447,15 @@ class _ConductorPageState extends State<ConductorPage> {
         ),
       ),
     );
+  }
+
+  @override
+  void dispose() {
+    _broadcastTimer?.cancel();
+    _udpSocket?.close();
+    _stopWsServer();
+    _portController.dispose();
+    super.dispose();
   }
 }
 
