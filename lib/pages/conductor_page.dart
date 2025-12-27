@@ -1,9 +1,11 @@
 import 'dart:convert';
-import 'dart:async';
 import 'dart:io';
-import 'package:flutter/foundation.dart' show kIsWeb;
+import 'dart:async';
 import 'package:flutter/material.dart';
-import 'package:path_provider/path_provider.dart';
+import '../models/piece_group.dart';
+import '../models/client_info.dart';
+import '../services/nextcloud_service.dart';
+import '../services/server_service.dart';
 
 class ConductorPage extends StatefulWidget {
   const ConductorPage({super.key});
@@ -12,39 +14,21 @@ class ConductorPage extends StatefulWidget {
   State<ConductorPage> createState() => _ConductorPageState();
 }
 
-// ================= CLIENT INFO =================
-class ClientInfo {
-  final WebSocket socket;
-  final String instrument;
-  final String voice;
-
-  ClientInfo({
-    required this.socket,
-    required this.instrument,
-    required this.voice,
-  });
-}
-
 class _ConductorPageState extends State<ConductorPage> {
-  HttpServer? _wsServer;
-  final Map<String, ClientInfo> _clientMap = {}; // key: socket.hashCode.toString()
+  final NextcloudService _nextcloudService = NextcloudService();
+  final ServerService _serverService = ServerService();
+  final TextEditingController _portController = TextEditingController(text: '4041');
 
-  bool _serverRunning = false;
-  String _serverStatus = 'Server nicht gestartet';
-  List<File> _localPieces = [];
   List<PieceGroup> _cachedPieceGroups = [];
-  RawDatagramSocket? _udpSocket;
-  Timer? _broadcastTimer;
-
-  final _portController = TextEditingController(text: '4041');
   bool _loadingPieces = false;
-
   PieceGroup? _currentPiece;
+
+  String _serverStatus = 'Server nicht gestartet';
 
   @override
   void initState() {
     super.initState();
-    _loadLocalPieces();
+    _loadPieces();
   }
 
   void _safeSetState(VoidCallback fn) {
@@ -52,173 +36,77 @@ class _ConductorPageState extends State<ConductorPage> {
     setState(fn);
   }
 
-  // ================= LADEN LOKALER STÜCKE =================
-  Future<void> _loadLocalPieces() async {
+  // ================= NEXTCLOUD =================
+  Future<void> _loadPieces() async {
     _safeSetState(() => _loadingPieces = true);
-
-    if (kIsWeb) {
-      _localPieces = [];
-      _cachedPieceGroups = _groupLocalPieces();
-      _safeSetState(() => _loadingPieces = false);
-      return;
+    try {
+      _cachedPieceGroups = await _nextcloudService.loadPieces();
+    } catch (e) {
+      debugPrint('Fehler beim Laden von Nextcloud: $e');
     }
-
-    Directory dir;
-    if (Platform.isAndroid || Platform.isIOS) {
-      dir = await getApplicationDocumentsDirectory();
-    } else {
-      dir = Directory(r'C:\TestNoten');
-      if (!await dir.exists()) await dir.create(recursive: true);
-    }
-
-    final list = <File>[];
-    await for (var f in dir.list(recursive: false, followLinks: false)) {
-      if (f is File && f.path.toLowerCase().endsWith('.pdf')) list.add(f);
-    }
-
-    _localPieces = list;
-    _cachedPieceGroups = _groupLocalPieces();
-
     _safeSetState(() => _loadingPieces = false);
   }
 
-  // ================= SERVER START =================
-  Future<void> _startWsServer() async {
+  // ================= SERVER =================
+  Future<void> _startServer() async {
     final port = int.tryParse(_portController.text) ?? 4041;
-
     try {
-      _wsServer = await HttpServer.bind(InternetAddress.anyIPv4, port);
+      await _serverService.start(port);
       _safeSetState(() {
-        _serverRunning = true;
         _serverStatus = 'Server gestartet auf Port $port';
       });
-
-      _wsServer!.listen((HttpRequest request) async {
-        if (WebSocketTransformer.isUpgradeRequest(request)) {
-          final socket = await WebSocketTransformer.upgrade(request);
-          _handleClient(socket);
-        }
-      });
-
-      _startBroadcast(port);
     } catch (e) {
       _safeSetState(() {
-        _serverRunning = false;
         _serverStatus = 'Fehler beim Starten: $e';
       });
     }
   }
 
-  // ================= CLIENT HANDLING =================
-  void _handleClient(WebSocket socket) {
-    final key = socket.hashCode.toString();
-    socket.listen((data) {
-      try {
-        final map = jsonDecode(data as String);
-        if (map['type'] == 'register') {
-          final client = ClientInfo(
-            socket: socket,
-            instrument: map['instrument'] ?? '',
-            voice: map['voice'] ?? '',
-          );
-          _clientMap[key] = client;
-          _safeSetState(() => _serverStatus = 'Client verbunden (${_clientMap.length})');
-        }
-      } catch (_) {}
-    }, onDone: () {
-      _clientMap.remove(key);
-      _safeSetState(() => _serverStatus = 'Client getrennt (${_clientMap.length})');
+  Future<void> _stopServer() async {
+    await _serverService.stop();
+    _safeSetState(() {
+      _currentPiece = null;
+      _serverStatus = 'Server gestoppt';
     });
   }
 
-  // ================= UDP BROADCAST =================
-  Future<void> _startBroadcast(int port) async {
-    final ip = await _getLocalIp();
-    if (ip == null) return;
+  Future<void> _sendPieceFromNextcloud(String filename,
+      {String? targetInstrument, String? targetVoice, PieceGroup? pieceGroup}) async {
+    if (pieceGroup != null) _safeSetState(() => _currentPiece = pieceGroup);
 
-    _udpSocket = await RawDatagramSocket.bind(InternetAddress.anyIPv4, 0);
-    _udpSocket!.broadcastEnabled = true;
+    try {
+      final bytes = await _nextcloudService.downloadPdf(filename);
+      final msg = jsonEncode({
+        'type': 'send_piece',
+        'name': filename,
+        'data': base64Encode(bytes),
+        'instrument': targetInstrument,
+        'voice': targetVoice,
+      });
 
-    final msg = jsonEncode({
-      'type': 'conductor_discovery',
-      'ip': ip,
-      'port': port,
-    });
+      final clients = _serverService.clientMap.values.where((c) =>
+          targetInstrument == null ||
+          targetVoice == null ||
+          (c.instrument == targetInstrument && c.voice == targetVoice));
 
-    _broadcastTimer = Timer.periodic(const Duration(seconds: 1), (_) {
-      if (!_serverRunning) return;
-      _udpSocket!.send(
-        utf8.encode(msg),
-        InternetAddress("255.255.255.255"),
-        4210,
-      );
-    });
-  }
+      for (var client in clients) {
+        client.socket.add(msg);
+      }
 
-  Future<String?> _getLocalIp() async {
-    for (var iface in await NetworkInterface.list()) {
-      for (var addr in iface.addresses) {
-        if (addr.type == InternetAddressType.IPv4 && !addr.isLoopback) {
-          return addr.address;
-        }
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Noten gesendet: $filename')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Fehler beim Download von Nextcloud: $e')),
+        );
       }
     }
-    return null;
   }
 
-  // ================= SERVER STOP =================
-  Future<void> _stopWsServer() async {
-    for (var c in _clientMap.values) {
-      try {
-        c.socket.add(jsonEncode({'type': 'status', 'text': 'Dirigent beendet'}));
-        await c.socket.close();
-      } catch (_) {}
-    }
-    _clientMap.clear();
-
-    await _wsServer?.close(force: true);
-    _broadcastTimer?.cancel();
-    _udpSocket?.close();
-
-    _safeSetState(() {
-      _serverRunning = false;
-      _serverStatus = 'Server gestoppt';
-      _currentPiece = null;
-    });
-  }
-
-  // ================= PIECE SENDING =================
-  Future<void> _sendPiece(File f, {String? targetInstrument, String? targetVoice, PieceGroup? pieceGroup}) async {
-    if (pieceGroup != null) {
-      _safeSetState(() => _currentPiece = pieceGroup);
-    }
-
-    final bytes = await f.readAsBytes();
-    final msg = jsonEncode({
-      'type': 'send_piece',
-      'name': f.uri.pathSegments.last,
-      'data': base64Encode(bytes),
-      'instrument': targetInstrument,
-      'voice': targetVoice,
-    });
-
-    final clients = _clientMap.values.where((c) =>
-        targetInstrument == null ||
-        targetVoice == null ||
-        (c.instrument == targetInstrument && c.voice == targetVoice));
-
-    for (var client in clients) {
-      client.socket.add(msg);
-    }
-
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Noten gesendet: ${f.uri.pathSegments.last}')),
-      );
-    }
-  }
-
-  // ================= END CURRENT PIECE =================
   void _sendEndPiece() {
     if (_currentPiece == null) return;
 
@@ -227,44 +115,30 @@ class _ConductorPageState extends State<ConductorPage> {
       'name': _currentPiece!.name,
     });
 
-    for (var c in _clientMap.values) {
+    for (var c in _serverService.clientMap.values) {
       c.socket.add(msg);
     }
 
     _safeSetState(() => _currentPiece = null);
   }
 
-  // ================= PIECE GROUP =================
-  List<PieceGroup> _groupLocalPieces() {
-    final Map<String, List<String>> map = {};
-    for (var file in _localPieces) {
-      final fileName = file.uri.pathSegments.last;
-      final parts = fileName.replaceAll('.pdf', '').split('_');
-      if (parts.length >= 3) {
-        final pieceName = parts[0];
-        final instrumentVoice = "${parts[1]} ${parts[2]}";
-        map.putIfAbsent(pieceName, () => []).add(instrumentVoice);
-      } else {
-        map.putIfAbsent(fileName.replaceAll('.pdf', ''), () => []).add("Unbekannt");
-      }
-    }
-    return map.entries
-        .map((e) => PieceGroup(name: e.key, instrumentsAndVoices: e.value))
-        .toList();
+  @override
+  void dispose() {
+    _serverService.stop();
+    _portController.dispose();
+    super.dispose();
   }
 
   // ================= BUILD =================
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final groupedPieces = _cachedPieceGroups;
 
     return Scaffold(
       backgroundColor: Colors.grey[50],
       appBar: AppBar(
         title: const Text('Dirigent Dashboard'),
         centerTitle: true,
-        elevation: 4,
         backgroundColor: Colors.deepPurple.shade700,
       ),
       body: Padding(
@@ -284,18 +158,18 @@ class _ConductorPageState extends State<ConductorPage> {
             Container(
               padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
               decoration: BoxDecoration(
-                color: _serverRunning ? Colors.green.shade50 : Colors.red.shade50,
+                color: _serverService.isRunning ? Colors.green.shade50 : Colors.red.shade50,
                 borderRadius: BorderRadius.circular(14),
                 border: Border.all(
-                  color: _serverRunning ? Colors.green : Colors.red,
+                  color: _serverService.isRunning ? Colors.green : Colors.red,
                   width: 1.5,
                 ),
               ),
               child: Row(
                 children: [
                   Icon(
-                    _serverRunning ? Icons.cloud_done : Icons.cloud_off,
-                    color: _serverRunning ? Colors.green.shade700 : Colors.red.shade700,
+                    _serverService.isRunning ? Icons.cloud_done : Icons.cloud_off,
+                    color: _serverService.isRunning ? Colors.green.shade700 : Colors.red.shade700,
                     size: 28,
                   ),
                   const SizedBox(width: 12),
@@ -303,7 +177,7 @@ class _ConductorPageState extends State<ConductorPage> {
                     child: Text(
                       _serverStatus,
                       style: theme.textTheme.bodyMedium?.copyWith(
-                        color: _serverRunning ? Colors.green.shade900 : Colors.red.shade900,
+                        color: _serverService.isRunning ? Colors.green.shade900 : Colors.red.shade900,
                         fontWeight: FontWeight.w600,
                       ),
                     ),
@@ -338,16 +212,16 @@ class _ConductorPageState extends State<ConductorPage> {
                 Expanded(
                   flex: 2,
                   child: ElevatedButton.icon(
-                    onPressed: _serverRunning ? _stopWsServer : _startWsServer,
-                    icon: Icon(_serverRunning ? Icons.stop_circle : Icons.play_circle_fill, size: 26),
+                    onPressed: _serverService.isRunning ? _stopServer : _startServer,
+                    icon: Icon(_serverService.isRunning ? Icons.stop_circle : Icons.play_circle_fill, size: 26),
                     label: Text(
-                      _serverRunning ? 'Stoppen' : 'Starten',
+                      _serverService.isRunning ? 'Stoppen' : 'Starten',
                       style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
                     ),
                     style: ElevatedButton.styleFrom(
                       padding: const EdgeInsets.symmetric(vertical: 14),
                       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-                      backgroundColor: _serverRunning ? Colors.redAccent : Colors.deepPurple.shade700,
+                      backgroundColor: _serverService.isRunning ? Colors.redAccent : Colors.deepPurple.shade700,
                     ),
                   ),
                 ),
@@ -367,9 +241,9 @@ class _ConductorPageState extends State<ConductorPage> {
             ),
             const SizedBox(height: 28),
 
-            // Lokale Noten
+            // Nextcloud Noten
             Text(
-              'Lokale Noten',
+              'Nextcloud Noten',
               style: theme.textTheme.headlineSmall?.copyWith(
                 fontWeight: FontWeight.bold,
                 color: Colors.deepPurple.shade900,
@@ -380,18 +254,18 @@ class _ConductorPageState extends State<ConductorPage> {
             Expanded(
               child: _loadingPieces
                   ? const Center(child: CircularProgressIndicator())
-                  : groupedPieces.isEmpty
+                  : _cachedPieceGroups.isEmpty
                       ? Center(
                           child: Text(
-                            'Keine lokalen Noten gefunden.',
+                            'Keine Noten gefunden.',
                             style: theme.textTheme.bodyMedium?.copyWith(color: Colors.black54),
                           ),
                         )
                       : ListView.separated(
-                          itemCount: groupedPieces.length,
+                          itemCount: _cachedPieceGroups.length,
                           separatorBuilder: (_, __) => const SizedBox(height: 10),
                           itemBuilder: (_, i) {
-                            final group = groupedPieces[i];
+                            final group = _cachedPieceGroups[i];
                             return Card(
                               elevation: 5,
                               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
@@ -414,21 +288,15 @@ class _ConductorPageState extends State<ConductorPage> {
                                 ),
                                 trailing: ElevatedButton.icon(
                                   onPressed: () {
-                                    _safeSetState(() => _currentPiece = group); // Stück setzen
+                                    _safeSetState(() => _currentPiece = group);
                                     for (var iv in group.instrumentsAndVoices) {
                                       final parts = iv.split(' ');
                                       if (parts.length < 2) continue;
                                       final instrument = parts[0];
                                       final voice = parts[1];
-
-                                      final fileName = "${group.name}_${instrument}_${voice}.pdf";
-                                      final file = _localPieces.firstWhere(
-                                        (f) => f.uri.pathSegments.last == fileName,
-                                        orElse: () => File(''),
-                                      );
-                                      if (file.existsSync()) {
-                                        _sendPiece(file, targetInstrument: instrument, targetVoice: voice);
-                                      }
+                                      final filename = "${group.name}_${instrument}_${voice}.pdf";
+                                      _sendPieceFromNextcloud(filename,
+                                          targetInstrument: instrument, targetVoice: voice, pieceGroup: group);
                                     }
                                   },
                                   icon: const Icon(Icons.send, color: Colors.white),
@@ -448,21 +316,4 @@ class _ConductorPageState extends State<ConductorPage> {
       ),
     );
   }
-
-  @override
-  void dispose() {
-    _broadcastTimer?.cancel();
-    _udpSocket?.close();
-    _stopWsServer();
-    _portController.dispose();
-    super.dispose();
-  }
-}
-
-// ================= PIECE GROUP =================
-class PieceGroup {
-  final String name;
-  final List<String> instrumentsAndVoices;
-
-  PieceGroup({required this.name, required this.instrumentsAndVoices});
 }

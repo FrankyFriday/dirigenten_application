@@ -1,13 +1,21 @@
 import 'package:flutter/material.dart';
-import 'conductor_page.dart';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
+import 'pages/conductor_page.dart';
 
-void main() {
+/// =========================
+/// APP ENTRY POINT
+/// =========================
+
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await dotenv.load(fileName: "assets/.env");
+
   runApp(const MyApp());
 }
 
-/* =========================
-   APP ROOT
-========================= */
+/// =========================
+/// APP ROOT
+/// =========================
 class MyApp extends StatelessWidget {
   const MyApp({super.key});
 
@@ -28,9 +36,9 @@ class MyApp extends StatelessWidget {
   }
 }
 
-/* =========================
-   SPLASH LANDING
-========================= */
+/// =========================
+/// SPLASH LANDING
+/// =========================
 class SplashLanding extends StatefulWidget {
   const SplashLanding({super.key});
 
@@ -43,7 +51,7 @@ class _SplashLandingState extends State<SplashLanding> {
   void initState() {
     super.initState();
 
-    // Nach 3 Sekunden direkt auf ConductorPage springen
+    // Nach 3 Sekunden automatisch zur ConductorPage navigieren
     Future.delayed(const Duration(seconds: 3), () {
       if (!mounted) return;
       Navigator.pushReplacement(
@@ -59,9 +67,9 @@ class _SplashLandingState extends State<SplashLanding> {
   }
 }
 
-/* =========================
-   SPLASH SCREEN
-========================= */
+/// =========================
+/// SPLASH SCREEN
+/// =========================
 class SplashScreen extends StatefulWidget {
   const SplashScreen({super.key});
 
@@ -71,9 +79,9 @@ class SplashScreen extends StatefulWidget {
 
 class _SplashScreenState extends State<SplashScreen>
     with SingleTickerProviderStateMixin {
-  late AnimationController _controller;
-  late Animation<double> _fade;
-  late Animation<double> _scale;
+  late final AnimationController _controller;
+  late final Animation<double> _fade;
+  late final Animation<double> _scale;
 
   @override
   void initState() {
@@ -124,6 +132,7 @@ class _SplashScreenState extends State<SplashScreen>
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
+                  // Kreis mit Musik-Icon
                   Container(
                     padding: const EdgeInsets.all(28),
                     decoration: BoxDecoration(
@@ -144,6 +153,8 @@ class _SplashScreenState extends State<SplashScreen>
                     ),
                   ),
                   const SizedBox(height: 28),
+
+                  // App Name
                   const Text(
                     'Marschpad',
                     style: TextStyle(
@@ -154,6 +165,8 @@ class _SplashScreenState extends State<SplashScreen>
                     ),
                   ),
                   const SizedBox(height: 6),
+
+                  // Untertitel
                   Text(
                     'Musikverein Scharrel',
                     style: TextStyle(
@@ -163,13 +176,14 @@ class _SplashScreenState extends State<SplashScreen>
                     ),
                   ),
                   const SizedBox(height: 40),
+
+                  // Ladeindikator
                   const SizedBox(
                     width: 36,
                     height: 36,
                     child: CircularProgressIndicator(
                       strokeWidth: 3,
-                      valueColor:
-                          AlwaysStoppedAnimation<Color>(Colors.white),
+                      valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
                     ),
                   ),
                 ],
