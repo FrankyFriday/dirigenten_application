@@ -1,10 +1,9 @@
 import 'dart:convert';
 import 'dart:async';
 import 'dart:io';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
-import 'package:http/http.dart' as http;
 import 'package:path_provider/path_provider.dart';
-import 'shared.dart';
 
 class ConductorPage extends StatefulWidget {
   const ConductorPage({super.key});
@@ -27,7 +26,6 @@ class _ConductorPageState extends State<ConductorPage> {
   final _homeUrlController = TextEditingController();
 
   bool _loadingPieces = false;
-  bool _downloading = false;
 
   @override
   void initState() {
@@ -42,16 +40,34 @@ class _ConductorPageState extends State<ConductorPage> {
 
   Future<void> _loadLocalPieces() async {
     _safeSetState(() => _loadingPieces = true);
-    final dir = await getApplicationDocumentsDirectory();
+
+    Directory dir;
+
+    if (kIsWeb) {
+      _localPieces = [];
+      _safeSetState(() => _loadingPieces = false);
+      return;
+    } else if (Platform.isAndroid || Platform.isIOS) {
+      dir = await getApplicationDocumentsDirectory();
+    } else {
+      dir = Directory(r'C:\TestNoten');
+      if (!await dir.exists()) {
+        await dir.create(recursive: true);
+      }
+    }
+
     final list = dir
         .listSync()
         .whereType<File>()
         .where((f) => f.path.toLowerCase().endsWith('.pdf'))
         .toList();
+
     _safeSetState(() {
       _localPieces = list;
       _loadingPieces = false;
     });
+
+    debugPrint('Gefundene Noten: ${_localPieces.map((f) => f.path).join(', ')}');
   }
 
   Future<void> _startWsServer() async {
@@ -154,7 +170,6 @@ class _ConductorPageState extends State<ConductorPage> {
     });
   }
 
-  // Extra Methode für dispose, wo kein setState() mehr aufgerufen wird
   Future<void> _stopWsServerWithoutSetState() async {
     for (var c in _clients) {
       try {
@@ -168,49 +183,6 @@ class _ConductorPageState extends State<ConductorPage> {
 
     _broadcastTimer?.cancel();
     _udpSocket?.close();
-  }
-
-  Future<void> _downloadPiecesFromHome() async {
-    final base = _homeUrlController.text.trim();
-    if (base.isEmpty) {
-      ScaffoldMessenger.of(context)
-          .showSnackBar(const SnackBar(content: Text('Bitte Heimserver-URL eingeben')));
-      return;
-    }
-
-    _safeSetState(() {
-      _downloading = true;
-    });
-
-    try {
-      final listResp = await http.get(Uri.parse('$base/pieces'));
-      if (listResp.statusCode != 200) {
-        throw 'Fehler beim Abrufen der Liste';
-      }
-
-      final List names = jsonDecode(listResp.body);
-      final dir = await getApplicationDocumentsDirectory();
-
-      for (var name in names) {
-        final resp = await http.get(Uri.parse('$base/download/$name'));
-        if (resp.statusCode == 200) {
-          final file = File('${dir.path}/$name');
-          await file.writeAsBytes(resp.bodyBytes);
-        }
-      }
-
-      await _loadLocalPieces();
-      ScaffoldMessenger.of(context)
-          .showSnackBar(const SnackBar(content: Text('Download abgeschlossen')));
-
-    } catch (e) {
-      ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text('Fehler: $e')));
-    } finally {
-      _safeSetState(() {
-        _downloading = false;
-      });
-    }
   }
 
   Future<void> _sendPiece(File f) async {
@@ -246,166 +218,171 @@ class _ConductorPageState extends State<ConductorPage> {
     super.dispose();
   }
 
-@override
-Widget build(BuildContext context) {
-  final theme = Theme.of(context);
+  // ===================== Neue Logik für gruppierte Stücke =====================
+  List<PieceGroup> _groupLocalPieces() {
+    final Map<String, List<String>> map = {};
 
-  return Scaffold(
-    appBar: AppBar(
-      title: const Text('Dirigent'),
-      centerTitle: true,
-      backgroundColor: theme.colorScheme.primary,
-      elevation: 4,
-    ),
-    body: Padding(
-      padding: const EdgeInsets.all(20),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Text(
-            'Status:',
-            style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
-          ),
-          const SizedBox(height: 4),
-          Container(
-            padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 16),
-            decoration: BoxDecoration(
-              color: _serverRunning ? Colors.green.shade100 : Colors.red.shade100,
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: Text(
-              _serverStatus,
-              style: theme.textTheme.bodyMedium?.copyWith(
-                color: _serverRunning ? Colors.green.shade800 : Colors.red.shade800,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-          ),
-          const SizedBox(height: 16),
+    for (var file in _localPieces) {
+      final fileName = file.uri.pathSegments.last;
 
-          // Port + Start/Stop Button
-          Row(
-            children: [
-              Expanded(
-                flex: 3,
-                child: TextField(
-                  controller: _portController,
-                  keyboardType: TextInputType.number,
-                  decoration: InputDecoration(
-                    labelText: 'WebSocket Port',
-                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                    contentPadding: const EdgeInsets.symmetric(vertical: 14, horizontal: 16),
-                  ),
-                ),
-              ),
-              const SizedBox(width: 16),
-              Expanded(
-                flex: 2,
-                child: ElevatedButton.icon(
-                  onPressed: _serverRunning ? _stopWsServer : _startWsServer,
-                  icon: Icon(_serverRunning ? Icons.stop_circle : Icons.play_circle_fill, size: 28),
-                  label: Text(_serverRunning ? 'Stoppen' : 'Starten', style: const TextStyle(fontSize: 18)),
-                  style: ElevatedButton.styleFrom(
-                    padding: const EdgeInsets.symmetric(vertical: 14),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-                    backgroundColor: _serverRunning ? Colors.red : theme.colorScheme.primary,
-                  ),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 24),
+      // Annahme: Dateiname = "Stueck_Instrument_Stimme.pdf"
+      final parts = fileName.replaceAll('.pdf', '').split('_');
+      if (parts.length >= 3) {
+        final pieceName = parts[0];
+        final instrumentVoice = "${parts[1]} ${parts[2]}";
+        map.putIfAbsent(pieceName, () => []).add(instrumentVoice);
+      } else {
+        map.putIfAbsent(fileName.replaceAll('.pdf', ''), () => []).add("Unbekannt");
+      }
+    }
 
-          // Heimserver URL
-          TextField(
-            controller: _homeUrlController,
-            decoration: InputDecoration(
-              labelText: 'Heimserver URL',
-              hintText: 'https://example.com',
-              border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-              contentPadding: const EdgeInsets.symmetric(vertical: 14, horizontal: 16),
-              prefixIcon: const Icon(Icons.link),
-            ),
-            keyboardType: TextInputType.url,
-          ),
-          const SizedBox(height: 16),
+    return map.entries
+        .map((e) => PieceGroup(name: e.key, instrumentsAndVoices: e.value))
+        .toList();
+  }
 
-          // Download Button
-          SizedBox(
-            height: 50,
-            child: ElevatedButton.icon(
-              icon: _downloading
-                  ? const SizedBox(
-                      height: 20,
-                      width: 20,
-                      child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
-                    )
-                  : const Icon(Icons.download, size: 24),
-              label: const Text(
-                'Noten laden',
-                style: TextStyle(fontSize: 18),
-              ),
-              onPressed: _downloading ? null : _downloadPiecesFromHome,
-              style: ElevatedButton.styleFrom(
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-              ),
-            ),
-          ),
-          const SizedBox(height: 28),
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
 
-          // Lokale Noten Header
-          Text(
-            'Lokale Noten',
-            style: theme.textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.bold),
-          ),
-          const SizedBox(height: 12),
+    final groupedPieces = _groupLocalPieces();
 
-          // Noten Liste
-          Expanded(
-            child: _loadingPieces
-                ? const Center(child: CircularProgressIndicator())
-                : _localPieces.isEmpty
-                    ? Center(
-                        child: Text(
-                          'Keine lokalen Noten gefunden.',
-                          style: theme.textTheme.bodyMedium?.copyWith(color: Colors.black54),
-                        ),
-                      )
-                    : ListView.separated(
-                        itemCount: _localPieces.length,
-                        separatorBuilder: (_, __) => const SizedBox(height: 10),
-                        itemBuilder: (_, i) {
-                          final file = _localPieces[i];
-                          final fileName = file.uri.pathSegments.last;
-
-                          return Card(
-                            elevation: 4,
-                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-                            child: ListTile(
-                              contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                              leading: CircleAvatar(
-                                radius: 28,
-                                backgroundColor: Colors.deepPurple.shade100,
-                                child: const Icon(Icons.picture_as_pdf, color: Colors.deepPurple, size: 32),
-                              ),
-                              title: Text(
-                                fileName,
-                                style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 18),
-                              ),
-                              trailing: IconButton(
-                                icon: const Icon(Icons.send, color: Colors.deepPurple),
-                                tooltip: 'Noten senden',
-                                onPressed: () => _sendPiece(file),
-                              ),
-                            ),
-                          );
-                        },
-                      ),
-          ),
-        ],
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Dirigent'),
+        centerTitle: true,
+        backgroundColor: theme.colorScheme.primary,
+        elevation: 4,
       ),
-    )
+      body: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text(
+              'Status:',
+              style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 4),
+            Container(
+              padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 16),
+              decoration: BoxDecoration(
+                color: _serverRunning ? Colors.green.shade100 : Colors.red.shade100,
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Text(
+                _serverStatus,
+                style: theme.textTheme.bodyMedium?.copyWith(
+                  color: _serverRunning ? Colors.green.shade800 : Colors.red.shade800,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+            const SizedBox(height: 16),
+
+            Row(
+              children: [
+                Expanded(
+                  flex: 3,
+                  child: TextField(
+                    controller: _portController,
+                    keyboardType: TextInputType.number,
+                    decoration: InputDecoration(
+                      labelText: 'WebSocket Port',
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                      contentPadding: const EdgeInsets.symmetric(vertical: 14, horizontal: 16),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 16),
+                Expanded(
+                  flex: 2,
+                  child: ElevatedButton.icon(
+                    onPressed: _serverRunning ? _stopWsServer : _startWsServer,
+                    icon: Icon(_serverRunning ? Icons.stop_circle : Icons.play_circle_fill, size: 28),
+                    label: Text(_serverRunning ? 'Stoppen' : 'Starten', style: const TextStyle(fontSize: 18)),
+                    style: ElevatedButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                      backgroundColor: _serverRunning ? Colors.red : theme.colorScheme.primary,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 28),
+
+            Text(
+              'Lokale Noten',
+              style: theme.textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 12),
+
+            Expanded(
+              child: _loadingPieces
+                  ? const Center(child: CircularProgressIndicator())
+                  : groupedPieces.isEmpty
+                      ? Center(
+                          child: Text(
+                            'Keine lokalen Noten gefunden.',
+                            style: theme.textTheme.bodyMedium?.copyWith(color: Colors.black54),
+                          ),
+                        )
+                      : ListView.separated(
+                          itemCount: groupedPieces.length,
+                          separatorBuilder: (_, __) => const SizedBox(height: 10),
+                          itemBuilder: (_, i) {
+                            final group = groupedPieces[i];
+
+                            return Card(
+                              elevation: 4,
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                              child: ListTile(
+                                contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                                leading: CircleAvatar(
+                                  radius: 28,
+                                  backgroundColor: Colors.deepPurple.shade100,
+                                  child: const Icon(Icons.picture_as_pdf, color: Colors.deepPurple, size: 32),
+                                ),
+                                title: Text(
+                                  group.name,
+                                  style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 18),
+                                ),
+                                subtitle: Text(
+                                  group.instrumentsAndVoices.join(', '),
+                                  style: const TextStyle(fontSize: 14, color: Colors.black54),
+                                ),
+                                trailing: IconButton(
+                                  icon: const Icon(Icons.send, color: Colors.deepPurple),
+                                  tooltip: 'Noten senden',
+                                  onPressed: () {
+                                    // Alle zugehörigen Dateien senden
+                                    for (var iv in group.instrumentsAndVoices) {
+                                      final fileName = "${group.name}_${iv.replaceAll(' ', '_')}.pdf";
+                                      final file = _localPieces.firstWhere(
+                                        (f) => f.uri.pathSegments.last == fileName,
+                                        orElse: () => null as File,
+                                      );
+                                      if (file != null) _sendPiece(file);
+                                    }
+                                  },
+                                ),
+                              ),
+                            );
+                          },
+                        ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
 
+// Hilfsklasse für gruppierte Stücke
+class PieceGroup {
+  final String name;
+  final List<String> instrumentsAndVoices;
+
+  PieceGroup({required this.name, required this.instrumentsAndVoices});
+}

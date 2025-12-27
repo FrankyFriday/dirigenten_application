@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'conductor_page.dart';
-import 'shared.dart';
 
 void main() {
   runApp(const MyApp());
