@@ -1,9 +1,7 @@
 import 'dart:convert';
-import 'dart:io';
 import 'dart:async';
 import 'package:flutter/material.dart';
 import '../models/piece_group.dart';
-import '../models/client_info.dart';
 import '../services/nextcloud_service.dart';
 import '../services/server_service.dart';
 
