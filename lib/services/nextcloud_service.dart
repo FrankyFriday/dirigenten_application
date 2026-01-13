@@ -11,7 +11,8 @@ class NextcloudService {
   String _authHeader() =>
       'Basic ${base64Encode(utf8.encode('$username:$password'))}';
 
-  Future<List<String>> getPdfList() async {
+  /// Liest nur die PDF-Dateinamen und erstellt daraus die Stückliste
+  Future<List<PieceGroup>> loadPieces() async {
     final uri = Uri.parse('$baseUrl/');
     final request = await HttpClient().openUrl('PROPFIND', uri);
     request.headers.set(HttpHeaders.authorizationHeader, _authHeader());
@@ -19,24 +20,15 @@ class NextcloudService {
     final response = await request.close();
     final body = await response.transform(utf8.decoder).join();
 
+    // Alle PDFs finden
     final regex = RegExp(r'<d:href>([^<]+\.pdf)</d:href>');
-    return regex.allMatches(body).map((m) {
+    final filenames = regex.allMatches(body).map((m) {
       final fullPath = Uri.decodeFull(m.group(1)!);
       final segments = fullPath.split('/');
       return segments.isNotEmpty ? segments.last : fullPath;
     }).toList();
-  }
 
-  Future<List<int>> downloadPdf(String filename) async {
-    final uri = Uri.parse('$baseUrl/$filename');
-    final request = await HttpClient().getUrl(uri);
-    request.headers.set(HttpHeaders.authorizationHeader, _authHeader());
-    final response = await request.close();
-    return await response.fold<List<int>>([], (prev, e) => prev..addAll(e));
-  }
-
-  Future<List<PieceGroup>> loadPieces() async {
-    final filenames = await getPdfList();
+    // Map: Stückname -> Instrument + Stimme
     final Map<String, List<String>> map = {};
 
     for (var fileName in filenames) {
@@ -50,6 +42,7 @@ class NextcloudService {
       }
     }
 
+    // Liste zurückgeben
     return map.entries
         .map((e) => PieceGroup(name: e.key, instrumentsAndVoices: e.value))
         .toList();
