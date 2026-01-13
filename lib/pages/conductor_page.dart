@@ -5,7 +5,6 @@ import '../models/piece_group.dart';
 import '../services/nextcloud_service.dart';
 import 'package:web_socket_channel/io.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
-import 'package:web_socket_channel/status.dart' as status;
 import 'package:uuid/uuid.dart';
 
 class ConductorPage extends StatefulWidget {
@@ -16,14 +15,13 @@ class ConductorPage extends StatefulWidget {
 }
 
 class _ConductorPageState extends State<ConductorPage> {
-  final NextcloudService _nextcloudService = NextcloudService();
+  final NextcloudService _service = NextcloudService();
   WebSocketChannel? _channel;
-
   late final String _clientId;
-  List<PieceGroup> _cachedPieceGroups = [];
-  bool _loadingPieces = false;
+  List<PieceGroup> _pieces = [];
   PieceGroup? _currentPiece;
-  String _serverStatus = 'Nicht verbunden';
+  String _status = 'Nicht verbunden';
+  bool _loading = true;
 
   static const double _radius = 16.0;
 
@@ -34,31 +32,24 @@ class _ConductorPageState extends State<ConductorPage> {
     _loadPieces();
   }
 
-  void _safeSetState(VoidCallback fn) {
-    if (!mounted) return;
-    setState(fn);
-  }
-
   Future<void> _loadPieces() async {
-    _safeSetState(() => _loadingPieces = true);
+    setState(() => _loading = true);
     try {
-      _cachedPieceGroups = await _nextcloudService.loadPieces();
+      _pieces = await _service.loadPieces();
     } catch (e) {
-      _safeSetState(() => _loadingPieces = false);
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Fehler beim Laden der Noten: $e')),
+        SnackBar(content: Text('Fehler beim Laden der Liste: $e')),
       );
-      return;
+    } finally {
+      setState(() => _loading = false);
     }
-    _safeSetState(() => _loadingPieces = false);
   }
 
-  Future<void> _connectToServer() async {
+  Future<void> _connect() async {
     const domain = 'ws.notenserver.duckdns.org';
-    _safeSetState(() => _serverStatus = 'Verbinde…');
-
+    setState(() => _status = 'Verbinde…');
     try {
-      final socket = await WebSocket.connect('wss://$domain').timeout(const Duration(seconds: 5));
+      final socket = await WebSocket.connect('wss://$domain');
       final channel = IOWebSocketChannel(socket);
 
       channel.sink.add(jsonEncode({
@@ -67,108 +58,61 @@ class _ConductorPageState extends State<ConductorPage> {
         'role': 'conductor',
       }));
 
-      channel.stream.listen(
-        (message) {
-          try {
-            final map = jsonDecode(message as String);
-            if (map['type'] == 'status') {
-              final text = map['text'] as String? ?? '';
-              _safeSetState(() => _serverStatus = text);
-            }
-          } catch (_) {}
-        },
-        onDone: _handleDisconnect,
-        onError: _handleError,
-      );
+      channel.stream.listen((msg) {
+        try {
+          final map = jsonDecode(msg as String);
+          if (map['type'] == 'status') setState(() => _status = map['text']);
+        } catch (_) {}
+      });
 
-      _safeSetState(() {
+      setState(() {
         _channel = channel;
-        _serverStatus = 'Verbunden mit Server';
+        _status = 'Verbunden';
       });
     } catch (e) {
-      _handleError(e);
+      setState(() => _status = 'Fehler: $e');
     }
   }
 
-  void _handleDisconnect() {
-    _safeSetState(() {
-      _serverStatus = 'Verbindung beendet';
-      _channel = null;
-    });
-  }
+  void _sendPiece(PieceGroup group) {
+    if (_channel == null) return;
 
-  void _handleError(Object e) {
-    _safeSetState(() {
-      _serverStatus = 'Fehler: $e';
-      _channel = null;
-    });
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('WebSocket Fehler: $e')),
-    );
-  }
+    setState(() => _currentPiece = group);
 
-  Future<void> _sendPiece(
-    String filename, {
-    String? targetInstrument,
-    String? targetVoice,
-    PieceGroup? pieceGroup,
-  }) async {
-    if (_channel == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Nicht verbunden mit Server')),
-      );
-      return;
-    }
+    for (var iv in group.instrumentsAndVoices) {
+      final parts = iv.split(' ');
+      if (parts.length < 2) continue;
 
-    if (pieceGroup != null) _safeSetState(() => _currentPiece = pieceGroup);
-
-    try {
-      final bytes = await _nextcloudService.downloadPdf(filename);
       final msg = jsonEncode({
-        'type': 'send_piece',
-        'name': filename,
-        'data': base64Encode(bytes),
-        'instrument': targetInstrument,
-        'voice': targetVoice,
+        'type': 'send_piece_signal',
+        'name': group.name,
+        'instrument': parts[0],
+        'voice': parts[1],
       });
 
       _channel!.sink.add(msg);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Stück gesendet: $filename')),
-      );
-    } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Fehler beim Senden: $e')),
-      );
     }
-  }
-
-  void _sendEndPiece() {
-    if (_channel == null || _currentPiece == null) return;
-
-    _channel!.sink.add(jsonEncode({
-      'type': 'end_piece',
-      'name': _currentPiece!.name,
-    }));
-
-    _safeSetState(() => _currentPiece = null);
 
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Stück beendet')),
+      SnackBar(content: Text('Stück gesendet: ${group.name}')),
     );
   }
 
-  @override
-  void dispose() {
-    _channel?.sink.close(status.goingAway);
-    super.dispose();
+  void _endPiece() {
+    if (_channel == null || _currentPiece == null) return;
+
+    _channel!.sink.add(jsonEncode({
+      'type': 'end_piece_signal',
+      'name': _currentPiece!.name,
+    }));
+
+    setState(() => _currentPiece = null);
+    ScaffoldMessenger.of(context)
+        .showSnackBar(const SnackBar(content: Text('Stück beendet')));
   }
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final isConnected = _channel != null;
-
     return Scaffold(
       backgroundColor: Colors.grey[100],
       appBar: AppBar(
@@ -181,119 +125,73 @@ class _ConductorPageState extends State<ConductorPage> {
       body: SafeArea(
         child: Column(
           children: [
+            // ================= Statusbar =================
             Padding(
               padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  Text(
-                    'Server Status',
-                    style: theme.textTheme.titleMedium?.copyWith(
-                      fontWeight: FontWeight.bold,
-                      color: Colors.deepPurple.shade900,
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(_radius),
+                  boxShadow: const [
+                    BoxShadow(
+                      color: Colors.black12,
+                      blurRadius: 6,
+                      offset: Offset(0, 3),
                     ),
-                  ),
-                  const SizedBox(height: 8),
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                    decoration: BoxDecoration(
-                      color: isConnected ? Colors.green.shade50 : Colors.red.shade50,
-                      borderRadius: BorderRadius.circular(_radius),
-                      border: Border.all(
-                        color: isConnected ? Colors.green.shade700 : Colors.red.shade700,
-                        width: 1.5,
+                  ],
+                ),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        'Status: $_status',
+                        style: const TextStyle(
+                          fontWeight: FontWeight.bold,
+                        ),
                       ),
-                      boxShadow: const [
-                        BoxShadow(color: Colors.black12, blurRadius: 6, offset: Offset(0, 3)),
-                      ],
                     ),
-                    child: Row(
-                      children: [
-                        Icon(
-                          isConnected ? Icons.cloud_done : Icons.cloud_off,
-                          color: isConnected ? Colors.green.shade700 : Colors.red.shade700,
-                          size: 28,
+                    ElevatedButton(
+                      onPressed: _channel == null ? _connect : null,
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.deepPurple.shade700,
+                        foregroundColor: Colors.white,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
                         ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: Text(
-                            _serverStatus,
-                            style: theme.textTheme.bodyMedium?.copyWith(
-                              fontWeight: FontWeight.w600,
-                              color: isConnected ? Colors.green.shade900 : Colors.red.shade900,
-                            ),
-                          ),
-                        ),
-                        ElevatedButton(
-                          onPressed: isConnected ? null : _connectToServer,
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: Colors.deepPurple.shade700,
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(12),
-                            ),
-                            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                          ),
-                          child: const Text(
-                            'Verbinden',
-                            style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
-                          ),
-                        ),
-                      ],
+                      ),
+                      child: const Text('Verbinden'),
                     ),
-                  ),
-                  const SizedBox(height: 20),
-                  ElevatedButton.icon(
-                    onPressed: _currentPiece == null ? null : _sendEndPiece,
-                    icon: const Icon(Icons.stop_circle, color: Colors.white),
-                    label: const Text('Stück zu Ende', style: TextStyle(color: Colors.white)),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.redAccent,
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(_radius)),
-                      padding: const EdgeInsets.symmetric(vertical: 14),
-                    ),
-                  ),
-                  const SizedBox(height: 24),
-                  Text(
-                    'Nextcloud Noten',
-                    style: theme.textTheme.headlineSmall?.copyWith(
-                      fontWeight: FontWeight.bold,
-                      color: Colors.deepPurple.shade900,
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                ],
+                  ],
+                ),
               ),
             ),
 
-            // ================= Scrollbare Liste =================
+            // ================= Stückeliste =================
             Expanded(
-              child: _loadingPieces
+              child: _loading
                   ? const Center(child: CircularProgressIndicator())
                   : ListView.separated(
-                      padding: const EdgeInsets.symmetric(horizontal: 16),
-                      itemCount: _cachedPieceGroups.length,
+                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                      itemCount: _pieces.length,
                       separatorBuilder: (_, __) => const SizedBox(height: 12),
                       itemBuilder: (_, i) {
-                        final group = _cachedPieceGroups[i];
+                        final group = _pieces[i];
+                        final isCurrent = _currentPiece == group;
                         return Card(
                           elevation: 5,
-                          shadowColor: Colors.deepPurple.shade100,
                           shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(16),
+                            borderRadius: BorderRadius.circular(_radius),
                           ),
+                          shadowColor: Colors.deepPurple.shade100,
                           child: ListTile(
                             contentPadding: const EdgeInsets.all(16),
-                            leading: CircleAvatar(
-                              radius: 28,
-                              backgroundColor: Colors.deepPurple.shade50,
-                              child: const Icon(Icons.picture_as_pdf, color: Colors.deepPurple, size: 32),
-                            ),
                             title: Text(
                               group.name,
-                              style: const TextStyle(
+                              style: TextStyle(
                                 fontWeight: FontWeight.bold,
+                                color: isCurrent ? Colors.deepPurple : Colors.black87,
                                 fontSize: 18,
-                                color: Colors.black87,
                               ),
                             ),
                             subtitle: Text(
@@ -304,32 +202,46 @@ class _ConductorPageState extends State<ConductorPage> {
                               ),
                             ),
                             trailing: ElevatedButton.icon(
-                              icon: const Icon(Icons.send),
+                              onPressed: () => _sendPiece(group),
+                              icon: const Icon(Icons.send, size: 20),
                               label: const Text('Senden'),
                               style: ElevatedButton.styleFrom(
                                 backgroundColor: Colors.deepPurple.shade700,
                                 foregroundColor: Colors.white,
-                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 12, vertical: 10),
                               ),
-                              onPressed: () {
-                                _safeSetState(() => _currentPiece = group);
-                                for (var iv in group.instrumentsAndVoices) {
-                                  final parts = iv.split(' ');
-                                  if (parts.length < 2) continue;
-                                  _sendPiece(
-                                    "${group.name}_${parts[0]}_${parts[1]}.pdf",
-                                    targetInstrument: parts[0],
-                                    targetVoice: parts[1],
-                                    pieceGroup: group,
-                                  );
-                                }
-                              },
                             ),
                           ),
                         );
                       },
                     ),
             ),
+
+            // ================= Stück zu Ende =================
+            if (_currentPiece != null)
+              Padding(
+                padding: const EdgeInsets.all(16),
+                child: ElevatedButton.icon(
+                  onPressed: _endPiece,
+                  icon: const Icon(Icons.stop_circle, size: 22),
+                  label: const Text(
+                    'Stück zu Ende',
+                    style: TextStyle(fontWeight: FontWeight.bold),
+                  ),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.redAccent,
+                    padding: const EdgeInsets.symmetric(vertical: 16),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(_radius),
+                    ),
+                    elevation: 6,
+                  ),
+                ),
+              ),
           ],
         ),
       ),
