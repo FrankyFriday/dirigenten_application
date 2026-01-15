@@ -23,7 +23,7 @@ class _ConductorPageState extends State<ConductorPage> {
   String _status = 'Nicht verbunden';
   bool _loading = true;
 
-  static const double _radius = 16.0;
+  static const double _radius = 20.0;
 
   @override
   void initState() {
@@ -79,22 +79,17 @@ class _ConductorPageState extends State<ConductorPage> {
 
     setState(() => _currentPiece = group);
 
-    for (var iv in group.instrumentsAndVoices) {
-      final parts = iv.split(' ');
-      if (parts.length < 2) continue;
-
+    for (var instrument in group.instrumentsAndVoices) {
       final msg = jsonEncode({
         'type': 'send_piece_signal',
         'name': group.name,
-        'instrument': parts[0],
-        'voice': parts[1],
+        'instrument': instrument,
       });
-
       _channel!.sink.add(msg);
     }
 
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('Stück gesendet: ${group.name}')),
+      SnackBar(content: Text('🎵 Stück gesendet: ${group.name}')),
     );
   }
 
@@ -107,8 +102,9 @@ class _ConductorPageState extends State<ConductorPage> {
     }));
 
     setState(() => _currentPiece = null);
-    ScaffoldMessenger.of(context)
-        .showSnackBar(const SnackBar(content: Text('Stück beendet')));
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('🛑 Stück beendet')),
+    );
   }
 
   @override
@@ -120,7 +116,7 @@ class _ConductorPageState extends State<ConductorPage> {
         centerTitle: true,
         backgroundColor: Colors.deepPurple.shade700,
         foregroundColor: Colors.white,
-        elevation: 4,
+        elevation: 6,
         shadowColor: Colors.deepPurple.shade300,
       ),
       body: SafeArea(
@@ -128,18 +124,14 @@ class _ConductorPageState extends State<ConductorPage> {
           children: [
             // ================= Statusbar =================
             Padding(
-              padding: const EdgeInsets.all(16),
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
               child: Container(
                 padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                 decoration: BoxDecoration(
                   color: Colors.white,
-                  borderRadius: BorderRadius.circular(_radius),
+                  borderRadius: BorderRadius.circular(16),
                   boxShadow: const [
-                    BoxShadow(
-                      color: Colors.black12,
-                      blurRadius: 6,
-                      offset: Offset(0, 3),
-                    ),
+                    BoxShadow(color: Colors.black12, blurRadius: 6, offset: Offset(0, 3)),
                   ],
                 ),
                 child: Row(
@@ -147,9 +139,7 @@ class _ConductorPageState extends State<ConductorPage> {
                     Expanded(
                       child: Text(
                         'Status: $_status',
-                        style: const TextStyle(
-                          fontWeight: FontWeight.bold,
-                        ),
+                        style: const TextStyle(fontWeight: FontWeight.bold),
                       ),
                     ),
                     ElevatedButton(
@@ -160,6 +150,7 @@ class _ConductorPageState extends State<ConductorPage> {
                         shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(12),
                         ),
+                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                       ),
                       child: const Text('Verbinden'),
                     ),
@@ -179,42 +170,59 @@ class _ConductorPageState extends State<ConductorPage> {
                       itemBuilder: (_, i) {
                         final group = _pieces[i];
                         final isCurrent = _currentPiece == group;
+
                         return Card(
-                          elevation: 5,
+                          elevation: 4,
                           shape: RoundedRectangleBorder(
                             borderRadius: BorderRadius.circular(_radius),
                           ),
                           shadowColor: Colors.deepPurple.shade100,
-                          child: ListTile(
-                            contentPadding: const EdgeInsets.all(16),
-                            title: Text(
-                              group.name,
-                              style: TextStyle(
-                                fontWeight: FontWeight.bold,
-                                color: isCurrent ? Colors.deepPurple : Colors.black87,
-                                fontSize: 18,
-                              ),
-                            ),
-                            subtitle: Text(
-                              group.instrumentsAndVoices.join(', '),
-                              style: const TextStyle(
-                                color: Colors.black54,
-                                fontSize: 14,
-                              ),
-                            ),
-                            trailing: ElevatedButton.icon(
-                              onPressed: () => _sendPiece(group),
-                              icon: const Icon(Icons.send, size: 20),
-                              label: const Text('Senden'),
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: Colors.deepPurple.shade700,
-                                foregroundColor: Colors.white,
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(12),
+                          child: Padding(
+                            padding: const EdgeInsets.all(16),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                // Titel
+                                Text(
+                                  group.name,
+                                  style: TextStyle(
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 20,
+                                    color: isCurrent ? Colors.deepPurple : Colors.black87,
+                                  ),
                                 ),
-                                padding: const EdgeInsets.symmetric(
-                                    horizontal: 12, vertical: 10),
-                              ),
+                                const SizedBox(height: 10),
+                                // Instrumente als einfache Textzeilen
+                                ...group.instrumentsAndVoices.map((ins) => Padding(
+                                      padding: const EdgeInsets.symmetric(vertical: 2),
+                                      child: Text(
+                                        ins,
+                                        style: const TextStyle(
+                                          fontSize: 16,
+                                          color: Colors.black87,
+                                        ),
+                                      ),
+                                    )),
+                                const SizedBox(height: 12),
+                                // Senden Button
+                                Align(
+                                  alignment: Alignment.centerRight,
+                                  child: ElevatedButton.icon(
+                                    onPressed: () => _sendPiece(group),
+                                    icon: const Icon(Icons.send, size: 20),
+                                    label: const Text('Senden'),
+                                    style: ElevatedButton.styleFrom(
+                                      backgroundColor: Colors.deepPurple.shade700,
+                                      foregroundColor: Colors.white,
+                                      shape: RoundedRectangleBorder(
+                                        borderRadius: BorderRadius.circular(12),
+                                      ),
+                                      padding: const EdgeInsets.symmetric(
+                                          horizontal: 16, vertical: 12),
+                                    ),
+                                  ),
+                                ),
+                              ],
                             ),
                           ),
                         );
@@ -245,7 +253,7 @@ class _ConductorPageState extends State<ConductorPage> {
               ),
           ],
         ),
-      ),
+      ), 
     );
   }
 }
