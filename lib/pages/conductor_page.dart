@@ -1,6 +1,5 @@
 import 'dart:convert';
 import 'dart:io';
-import 'dart:async';
 import 'package:flutter/material.dart';
 import '../models/piece_group.dart';
 import '../services/nextcloud_service.dart';
@@ -23,7 +22,6 @@ class _ConductorPageState extends State<ConductorPage> {
   PieceGroup? _currentPiece;
   String _status = 'Nicht verbunden';
   bool _loading = true;
-  bool _connecting = false;
 
   static const double _radius = 16.0;
 
@@ -32,7 +30,6 @@ class _ConductorPageState extends State<ConductorPage> {
     super.initState();
     _clientId = const Uuid().v4();
     _loadPieces();
-    _connect(); // automatische Verbindung beim Start
   }
 
   Future<void> _loadPieces() async {
@@ -49,66 +46,36 @@ class _ConductorPageState extends State<ConductorPage> {
   }
 
   Future<void> _connect() async {
-    if (_connecting) return;
-    _connecting = true;
-
     const domain = 'ws.notenserver.duckdns.org';
-
-    while (mounted) {
-      try {
-        setState(() => _status = 'Verbinde…');
-        final socket = await WebSocket.connect('wss://$domain');
-        final channel = IOWebSocketChannel(socket);
-
-        channel.sink.add(jsonEncode({
-          'type': 'register',
-          'clientId': _clientId,
-          'role': 'conductor',
-        }));
-
-        channel.stream.listen(
-          _handleMessage,
-          onDone: _reconnect,
-          onError: (_) => _reconnect(),
-          cancelOnError: true,
-        );
-
-        setState(() {
-          _channel = channel;
-          _status = 'Verbunden';
-        });
-
-        _connecting = false;
-        return;
-      } catch (e) {
-        setState(() => _status = 'Verbindung fehlgeschlagen, versuche erneut…');
-        await Future.delayed(const Duration(seconds: 5));
-      }
-    }
-  }
-
-  void _reconnect() {
-    if (!mounted) return;
-    setState(() => _status = 'Verbindung verloren, reconnect...');
-    _channel = null;
-    _connect();
-  }
-
-  void _handleMessage(dynamic message) {
+    setState(() => _status = 'Verbinde…');
     try {
-      final map = jsonDecode(message as String);
-      if (map['type'] == 'status') {
-        setState(() => _status = map['text']);
-      }
-    } catch (_) {}
+      final socket = await WebSocket.connect('wss://$domain');
+      final channel = IOWebSocketChannel(socket);
+
+      channel.sink.add(jsonEncode({
+        'type': 'register',
+        'clientId': _clientId,
+        'role': 'conductor',
+      }));
+
+      channel.stream.listen((msg) {
+        try {
+          final map = jsonDecode(msg as String);
+          if (map['type'] == 'status') setState(() => _status = map['text']);
+        } catch (_) {}
+      });
+
+      setState(() {
+        _channel = channel;
+        _status = 'Verbunden';
+      });
+    } catch (e) {
+      setState(() => _status = 'Fehler: $e');
+    }
   }
 
   void _sendPiece(PieceGroup group) {
-    if (_channel == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Nicht verbunden, kann Stück nicht senden')));
-      return;
-    }
+    if (_channel == null) return;
 
     setState(() => _currentPiece = group);
 
@@ -140,7 +107,6 @@ class _ConductorPageState extends State<ConductorPage> {
     }));
 
     setState(() => _currentPiece = null);
-
     ScaffoldMessenger.of(context)
         .showSnackBar(const SnackBar(content: Text('Stück beendet')));
   }
@@ -207,8 +173,7 @@ class _ConductorPageState extends State<ConductorPage> {
               child: _loading
                   ? const Center(child: CircularProgressIndicator())
                   : ListView.separated(
-                      padding:
-                          const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                       itemCount: _pieces.length,
                       separatorBuilder: (_, __) => const SizedBox(height: 12),
                       itemBuilder: (_, i) {
@@ -226,9 +191,7 @@ class _ConductorPageState extends State<ConductorPage> {
                               group.name,
                               style: TextStyle(
                                 fontWeight: FontWeight.bold,
-                                color: isCurrent
-                                    ? Colors.deepPurple
-                                    : Colors.black87,
+                                color: isCurrent ? Colors.deepPurple : Colors.black87,
                                 fontSize: 18,
                               ),
                             ),
