@@ -5,27 +5,22 @@ on:
     tags:
       - 'v*.*.*'
 
+permissions:
+  contents: write   # erlaubt Push & Release
+  packages: write   # optional, falls du Packages veröffentlichen willst
+
 jobs:
   build-release:
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout source
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Setup Flutter
-        uses: subosito/flutter-action@v2
+      - uses: subosito/flutter-action@v2
         with:
           channel: stable
 
-      - name: Install dependencies
-        run: flutter pub get
-
-      - name: Build release APK
-        run: flutter build apk --release
-
-      - name: List built files (Debug)
-        run: ls -R build/app/outputs/flutter-apk
+      - run: flutter pub get
+      - run: flutter build apk --release
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
