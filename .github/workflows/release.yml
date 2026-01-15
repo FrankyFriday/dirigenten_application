@@ -24,7 +24,12 @@ jobs:
       - name: Build release APK
         run: flutter build apk --release
 
-      - name: Upload GitHub Release
+      - name: List built files (Debug)
+        run: ls -R build/app/outputs/flutter-apk
+
+      - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           files: build/app/outputs/flutter-apk/app-release.apk
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
