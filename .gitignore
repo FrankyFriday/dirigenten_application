@@ -65,7 +65,7 @@ app.*.map.json
 # =========================
 .env
 .env.*
-assets/.env
+**/.env
 
 # =========================
 # Docker / Nextcloud
