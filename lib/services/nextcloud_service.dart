@@ -11,13 +11,12 @@ class NextcloudService {
   String _authHeader() =>
       'Basic ${base64Encode(utf8.encode('$username:$password'))}';
 
-  /// Liest nur die PDF-Dateien und erstellt daraus die Stückliste
-  /// Gruppiert nur nach Instrument, nicht nach Stimme
+  /// Liest nur die PDF-Dateinamen und erstellt daraus die Stückliste
   Future<List<PieceGroup>> loadPieces() async {
     final uri = Uri.parse('$baseUrl/');
     final request = await HttpClient().openUrl('PROPFIND', uri);
     request.headers.set(HttpHeaders.authorizationHeader, _authHeader());
-    request.headers.set('Depth', '1'); // 🔹 nur eine Ebene laden → schneller
+    request.headers.set('Depth', 'infinity');
     final response = await request.close();
     final body = await response.transform(utf8.decoder).join();
 
@@ -29,26 +28,23 @@ class NextcloudService {
       return segments.isNotEmpty ? segments.last : fullPath;
     }).toList();
 
-    // Map: Stückname -> Set<Instrument>
-    final Map<String, Set<String>> map = {};
+    // Map: Stückname -> Instrument + Stimme
+    final Map<String, List<String>> map = {};
 
     for (var fileName in filenames) {
       final parts = fileName.replaceAll('.pdf', '').split('_');
       if (parts.length >= 3) {
         final pieceName = parts[0];
-        final instrument = parts[1]; // nur Instrument
-        map.putIfAbsent(pieceName, () => {}).add(instrument);
+        final instrumentVoice = "${parts[1]} ${parts[2]}";
+        map.putIfAbsent(pieceName, () => []).add(instrumentVoice);
       } else {
-        map.putIfAbsent(fileName.replaceAll('.pdf', ''), () => {}).add("Unbekannt");
+        map.putIfAbsent(fileName.replaceAll('.pdf', ''), () => []).add("Unbekannt");
       }
     }
 
-    // Map in PieceGroup Liste umwandeln
+    // Liste zurückgeben
     return map.entries
-        .map((e) => PieceGroup(
-              name: e.key,
-              instrumentsAndVoices: e.value.toList(), // nur Instrumente
-            ))
+        .map((e) => PieceGroup(name: e.key, instrumentsAndVoices: e.value))
         .toList();
   }
 }
