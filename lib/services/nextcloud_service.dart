@@ -11,40 +11,57 @@ class NextcloudService {
   String _authHeader() =>
       'Basic ${base64Encode(utf8.encode('$username:$password'))}';
 
-  /// Liest nur die PDF-Dateinamen und erstellt daraus die Stückliste
-  Future<List<PieceGroup>> loadPieces() async {
+  /// Lädt alle PDF-Dateipfade rekursiv
+  Future<List<String>> _loadAllPdfPaths() async {
     final uri = Uri.parse('$baseUrl/');
     final request = await HttpClient().openUrl('PROPFIND', uri);
     request.headers.set(HttpHeaders.authorizationHeader, _authHeader());
     request.headers.set('Depth', 'infinity');
+
     final response = await request.close();
     final body = await response.transform(utf8.decoder).join();
 
-    // Alle PDFs finden
     final regex = RegExp(r'<d:href>([^<]+\.pdf)</d:href>');
-    final filenames = regex.allMatches(body).map((m) {
-      final fullPath = Uri.decodeFull(m.group(1)!);
-      final segments = fullPath.split('/');
-      return segments.isNotEmpty ? segments.last : fullPath;
-    }).toList();
+    return regex
+        .allMatches(body)
+        .map((m) => Uri.decodeFull(m.group(1)!))
+        .toList();
+  }
+
+  /// Erstellt die Stückliste aus den PDF-Dateinamen
+  Future<List<PieceGroup>> loadPieces() async {
+    final paths = await _loadAllPdfPaths();
 
     // Map: Stückname -> Instrument + Stimme
     final Map<String, List<String>> map = {};
 
-    for (var fileName in filenames) {
-      final parts = fileName.replaceAll('.pdf', '').split('_');
+    for (final fullPath in paths) {
+      final fileName = fullPath.split('/').last;
+      final clean = fileName.replaceAll('.pdf', '');
+      final parts = clean.split('_');
+
+      // Erwartetes Schema: Stück_Instrument_Stimme.pdf
       if (parts.length >= 3) {
         final pieceName = parts[0];
-        final instrumentVoice = "${parts[1]} ${parts[2]}";
-        map.putIfAbsent(pieceName, () => []).add(instrumentVoice);
+        final instrument = parts[1];
+        final voice = parts[2];
+
+        map
+            .putIfAbsent(pieceName, () => [])
+            .add('$instrument $voice');
       } else {
-        map.putIfAbsent(fileName.replaceAll('.pdf', ''), () => []).add("Unbekannt");
+        // Fallback – sollte praktisch nie passieren
+        map.putIfAbsent(clean, () => []).add('Unbekannt');
       }
     }
 
-    // Liste zurückgeben
     return map.entries
-        .map((e) => PieceGroup(name: e.key, instrumentsAndVoices: e.value))
+        .map(
+          (e) => PieceGroup(
+            name: e.key,
+            instrumentsAndVoices: e.value,
+          ),
+        )
         .toList();
   }
 }
