@@ -23,8 +23,6 @@ class _ConductorPageState extends State<ConductorPage> {
   String _status = 'Nicht verbunden';
   bool _loading = true;
 
-  static const double _radius = 16.0;
-
   @override
   void initState() {
     super.initState();
@@ -38,7 +36,7 @@ class _ConductorPageState extends State<ConductorPage> {
       _pieces = await _service.loadPieces();
     } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Fehler beim Laden der Liste: $e')),
+        SnackBar(content: Text('Fehler beim Laden: $e')),
       );
     } finally {
       setState(() => _loading = false);
@@ -59,10 +57,10 @@ class _ConductorPageState extends State<ConductorPage> {
       }));
 
       channel.stream.listen((msg) {
-        try {
-          final map = jsonDecode(msg as String);
-          if (map['type'] == 'status') setState(() => _status = map['text']);
-        } catch (_) {}
+        final map = jsonDecode(msg as String);
+        if (map['type'] == 'status') {
+          setState(() => _status = map['text']);
+        }
       });
 
       setState(() {
@@ -70,7 +68,7 @@ class _ConductorPageState extends State<ConductorPage> {
         _status = 'Verbunden';
       });
     } catch (e) {
-      setState(() => _status = 'Fehler: $e');
+      setState(() => _status = 'Fehler');
     }
   }
 
@@ -83,14 +81,12 @@ class _ConductorPageState extends State<ConductorPage> {
       final parts = iv.split(' ');
       if (parts.length < 2) continue;
 
-      final msg = jsonEncode({
+      _channel!.sink.add(jsonEncode({
         'type': 'send_piece_signal',
         'name': group.name,
         'instrument': parts[0],
         'voice': parts[1],
-      });
-
-      _channel!.sink.add(msg);
+      }));
     }
 
     ScaffoldMessenger.of(context).showSnackBar(
@@ -107,141 +103,194 @@ class _ConductorPageState extends State<ConductorPage> {
     }));
 
     setState(() => _currentPiece = null);
-    ScaffoldMessenger.of(context)
-        .showSnackBar(const SnackBar(content: Text('Stück beendet')));
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Colors.grey[100],
+      backgroundColor: const Color(0xFFF7F8FC),
       appBar: AppBar(
-        title: const Text('Dirigent Dashboard'),
+        elevation: 0,
+        backgroundColor: Colors.deepPurple,
+        foregroundColor: Colors.white,
+        title: const Text(
+          'Dirigentenpult',
+          style: TextStyle(fontWeight: FontWeight.w600),
+        ),
         centerTitle: true,
-        backgroundColor: Colors.deepPurple.shade700,
-        elevation: 4,
-        shadowColor: Colors.deepPurple.shade300,
       ),
-      body: SafeArea(
-        child: Column(
-          children: [
-            // ================= Statusbar =================
+      body: Column(
+        children: [
+          _StatusHeader(
+            status: _status,
+            onConnect: _channel == null ? _connect : null,
+          ),
+          Expanded(
+            child: _loading
+                ? const Center(child: CircularProgressIndicator())
+                : ListView.builder(
+                    padding: const EdgeInsets.all(20),
+                    itemCount: _pieces.length,
+                    itemBuilder: (_, i) {
+                      final group = _pieces[i];
+                      final isActive = _currentPiece == group;
+                      return _PieceCard(
+                        group: group,
+                        active: isActive,
+                        onSend: () => _sendPiece(group),
+                      );
+                    },
+                  ),
+          ),
+          if (_currentPiece != null)
             Padding(
-              padding: const EdgeInsets.all(16),
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(_radius),
-                  boxShadow: const [
-                    BoxShadow(
-                      color: Colors.black12,
-                      blurRadius: 6,
-                      offset: Offset(0, 3),
-                    ),
-                  ],
+              padding: const EdgeInsets.all(20),
+              child: ElevatedButton.icon(
+                onPressed: _endPiece,
+                icon: const Icon(Icons.stop),
+                label: const Text(
+                  'Stück beenden',
+                  style: TextStyle(fontSize: 16),
                 ),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: Text(
-                        'Status: $_status',
-                        style: const TextStyle(
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                    ),
-                    ElevatedButton(
-                      onPressed: _channel == null ? _connect : null,
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.deepPurple.shade700,
-                        foregroundColor: Colors.white,
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                      ),
-                      child: const Text('Verbinden'),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-
-            // ================= Stückeliste =================
-            Expanded(
-              child: _loading
-                  ? const Center(child: CircularProgressIndicator())
-                  : ListView.separated(
-                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                      itemCount: _pieces.length,
-                      separatorBuilder: (_, __) => const SizedBox(height: 12),
-                      itemBuilder: (_, i) {
-                        final group = _pieces[i];
-                        final isCurrent = _currentPiece == group;
-                        return Card(
-                          elevation: 5,
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(_radius),
-                          ),
-                          shadowColor: Colors.deepPurple.shade100,
-                          child: ListTile(
-                            contentPadding: const EdgeInsets.all(16),
-                            title: Text(
-                              group.name,
-                              style: TextStyle(
-                                fontWeight: FontWeight.bold,
-                                color: isCurrent ? Colors.deepPurple : Colors.black87,
-                                fontSize: 18,
-                              ),
-                            ),
-                            subtitle: Text(
-                              group.instrumentsAndVoices.join(', '),
-                              style: const TextStyle(
-                                color: Colors.black54,
-                                fontSize: 14,
-                              ),
-                            ),
-                            trailing: ElevatedButton.icon(
-                              onPressed: () => _sendPiece(group),
-                              icon: const Icon(Icons.send, size: 20),
-                              label: const Text('Senden'),
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: Colors.deepPurple.shade700,
-                                foregroundColor: Colors.white,
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(12),
-                                ),
-                                padding: const EdgeInsets.symmetric(
-                                    horizontal: 12, vertical: 10),
-                              ),
-                            ),
-                          ),
-                        );
-                      },
-                    ),
-            ),
-
-            // ================= Stück zu Ende =================
-            if (_currentPiece != null)
-              Padding(
-                padding: const EdgeInsets.all(16),
-                child: ElevatedButton.icon(
-                  onPressed: _endPiece,
-                  icon: const Icon(Icons.stop_circle, size: 22),
-                  label: const Text(
-                    'Stück zu Ende',
-                    style: TextStyle(fontWeight: FontWeight.bold),
-                  ),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.redAccent,
-                    padding: const EdgeInsets.symmetric(vertical: 16),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(_radius),
-                    ),
-                    elevation: 6,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.redAccent,
+                  minimumSize: const Size.fromHeight(54),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(20),
                   ),
                 ),
               ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+/* ===================== STATUS HEADER ===================== */
+
+class _StatusHeader extends StatelessWidget {
+  final String status;
+  final VoidCallback? onConnect;
+
+  const _StatusHeader({
+    required this.status,
+    required this.onConnect,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final connected = status.toLowerCase().contains('verbunden');
+
+    return Container(
+      margin: const EdgeInsets.all(20),
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(24),
+        boxShadow: const [
+          BoxShadow(
+            color: Colors.black12,
+            blurRadius: 14,
+            offset: Offset(0, 6),
+          ),
+        ],
+      ),
+      child: Row(
+        children: [
+          Icon(
+            connected ? Icons.wifi : Icons.wifi_off,
+            color: connected ? Colors.green : Colors.orange,
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Text(
+              status,
+              style: const TextStyle(fontWeight: FontWeight.w600),
+            ),
+          ),
+          ElevatedButton(
+            onPressed: onConnect,
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.deepPurple,
+              foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(14),
+              ),
+            ),
+            child: const Text('Verbinden'),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/* ===================== PIECE CARD ===================== */
+
+class _PieceCard extends StatelessWidget {
+  final PieceGroup group;
+  final bool active;
+  final VoidCallback onSend;
+
+  const _PieceCard({
+    required this.group,
+    required this.active,
+    required this.onSend,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(20),
+        boxShadow: const [
+          BoxShadow(
+            color: Colors.black12,
+            blurRadius: 12,
+            offset: Offset(0, 6),
+          ),
+        ],
+        border: active
+            ? Border.all(color: Colors.deepPurpleAccent, width: 2)
+            : null,
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              group.name,
+              style: TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.bold,
+                color: active ? Colors.deepPurpleAccent : Colors.black87,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              group.instrumentsAndVoices.join(', '),
+              style: const TextStyle(color: Colors.black54),
+            ),
+            const SizedBox(height: 14),
+            Align(
+              alignment: Alignment.centerRight,
+              child: ElevatedButton.icon(
+                onPressed: onSend,
+                icon: const Icon(Icons.send, size: 18),
+                label: const Text('Senden'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.deepPurple,
+                  foregroundColor: Colors.white,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                ),
+              ),
+            ),
           ],
         ),
       ),
