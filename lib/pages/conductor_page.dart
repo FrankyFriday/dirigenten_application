@@ -6,6 +6,10 @@ import '../services/nextcloud_service.dart';
 import 'package:web_socket_channel/io.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 import 'package:uuid/uuid.dart';
+import 'package:package_info_plus/package_info_plus.dart';
+import 'package:http/http.dart' as http;
+import 'package:path_provider/path_provider.dart';
+import 'package:open_filex/open_filex.dart';
 
 class ConductorPage extends StatefulWidget {
   const ConductorPage({super.key});
@@ -28,6 +32,7 @@ class _ConductorPageState extends State<ConductorPage> {
     super.initState();
     _clientId = const Uuid().v4();
     _loadPieces();
+    _connect(); // Direkt beim Start verbinden
   }
 
   Future<void> _loadPieces() async {
@@ -43,6 +48,9 @@ class _ConductorPageState extends State<ConductorPage> {
     }
   }
 
+  /// =========================
+  /// VERBINDUNG & EVENT-HÖREN
+  /// =========================
   Future<void> _connect() async {
     const domain = 'ws.notenserver.duckdns.org';
     setState(() => _status = 'Verbinde…');
@@ -56,10 +64,36 @@ class _ConductorPageState extends State<ConductorPage> {
         'role': 'conductor',
       }));
 
-      channel.stream.listen((msg) {
+      // Nachrichten abhören
+      channel.stream.listen((msg) async {
         final map = jsonDecode(msg as String);
-        if (map['type'] == 'status') {
-          setState(() => _status = map['text']);
+
+        // ===== Stück-Kommandos =====
+        switch (map['type']) {
+          case 'status':
+            setState(() => _status = map['text']);
+            break;
+
+          case 'send_piece_signal':
+            // Optional: könnte man hier auch empfangen loggen
+            break;
+
+          case 'end_piece_signal':
+            break;
+
+          // ===== Release-Updates =====
+          case 'release_announce':
+            final info = await PackageInfo.fromPlatform();
+            final currentVersion = info.version;
+
+            if (map['app'] == 'dirigenten_application' &&
+                map['version'] != currentVersion) {
+              await _downloadAndInstall(map['apkUrl']);
+            }
+            break;
+
+          default:
+            break;
         }
       });
 
@@ -69,9 +103,31 @@ class _ConductorPageState extends State<ConductorPage> {
       });
     } catch (e) {
       setState(() => _status = 'Fehler');
+      print('[WS] Fehler: $e');
     }
   }
 
+  /// =========================
+  /// APK DOWNLOAD & INSTALL
+  /// =========================
+  Future<void> _downloadAndInstall(String url) async {
+    try {
+      final dir = await getExternalStorageDirectory();
+      final file = File('${dir!.path}/update.apk');
+
+      final res = await http.get(Uri.parse(url));
+      await file.writeAsBytes(res.bodyBytes);
+
+      // Android Installer Dialog öffnen
+      await OpenFilex.open(file.path);
+    } catch (e) {
+      print('[UPDATE] Fehler beim Download/Install: $e');
+    }
+  }
+
+  /// =========================
+  /// Stück senden
+  /// =========================
   void _sendPiece(PieceGroup group) {
     if (_channel == null) return;
 
@@ -168,7 +224,6 @@ class _ConductorPageState extends State<ConductorPage> {
 }
 
 /* ===================== STATUS HEADER ===================== */
-
 class _StatusHeader extends StatelessWidget {
   final String status;
   final VoidCallback? onConnect;
@@ -227,7 +282,6 @@ class _StatusHeader extends StatelessWidget {
 }
 
 /* ===================== PIECE CARD ===================== */
-
 class _PieceCard extends StatelessWidget {
   final PieceGroup group;
   final bool active;
