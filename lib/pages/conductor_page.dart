@@ -47,7 +47,6 @@ class _ConductorPageState extends State<ConductorPage> {
       setState(() => _loading = false);
     }
   }
-  
 
   /// =========================
   /// VERBINDUNG & EVENT-HÖREN
@@ -55,10 +54,12 @@ class _ConductorPageState extends State<ConductorPage> {
   Future<void> _connect() async {
     const domain = 'ws.notenserver.duckdns.org';
     setState(() => _status = 'Verbinde…');
+
     try {
       final socket = await WebSocket.connect('wss://$domain');
       final channel = IOWebSocketChannel(socket);
 
+      // Registrierung beim Server
       channel.sink.add(jsonEncode({
         'type': 'register',
         'clientId': _clientId,
@@ -69,20 +70,16 @@ class _ConductorPageState extends State<ConductorPage> {
       channel.stream.listen((msg) async {
         final map = jsonDecode(msg as String);
 
-        // ===== Stück-Kommandos =====
         switch (map['type']) {
           case 'status':
             setState(() => _status = map['text']);
             break;
 
           case 'send_piece_signal':
-            // Optional: könnte man hier auch empfangen loggen
-            break;
-
           case 'end_piece_signal':
+            // Optional: Aktionen für Stück-Signale
             break;
 
-          // ===== Release-Updates =====
           case 'release_announce':
             final info = await PackageInfo.fromPlatform();
             final currentVersion = info.version;
@@ -94,8 +91,16 @@ class _ConductorPageState extends State<ConductorPage> {
             break;
 
           default:
+            print('[WS] Unbekannter Typ: ${map['type']}');
             break;
         }
+      }, onDone: () {
+        setState(() => _status = 'Getrennt');
+        _channel = null;
+      }, onError: (err) {
+        setState(() => _status = 'Fehler');
+        print('[WS] Fehler: $err');
+        _channel = null;
       });
 
       setState(() {
@@ -104,7 +109,7 @@ class _ConductorPageState extends State<ConductorPage> {
       });
     } catch (e) {
       setState(() => _status = 'Fehler');
-      print('[WS] Fehler: $e');
+      print('[WS] Fehler beim Verbinden: $e');
     }
   }
 
@@ -114,12 +119,14 @@ class _ConductorPageState extends State<ConductorPage> {
   Future<void> _downloadAndInstall(String url) async {
     try {
       final dir = await getExternalStorageDirectory();
-      final file = File('${dir!.path}/update.apk');
+      if (dir == null) throw Exception('Kein Speicherverzeichnis gefunden');
 
+      final file = File('${dir.path}/update.apk');
       final res = await http.get(Uri.parse(url));
+
+      if (res.statusCode != 200) throw Exception('Download fehlgeschlagen: ${res.statusCode}');
       await file.writeAsBytes(res.bodyBytes);
 
-      // Android Installer Dialog öffnen
       await OpenFilex.open(file.path);
     } catch (e) {
       print('[UPDATE] Fehler beim Download/Install: $e');
