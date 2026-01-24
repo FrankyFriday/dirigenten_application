@@ -1,11 +1,18 @@
+import 'dart:convert';
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
+import 'package:web_socket_channel/web_socket_channel.dart';
+import 'package:package_info_plus/package_info_plus.dart';
+import 'package:http/http.dart' as http;
+import 'package:path_provider/path_provider.dart';
+import 'package:open_filex/open_filex.dart';
+
 import 'pages/conductor_page.dart';
 
 /// =========================
 /// APP ENTRY POINT
 /// =========================
-
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await dotenv.load(fileName: "assets/.env");
@@ -50,8 +57,44 @@ class _SplashLandingState extends State<SplashLanding> {
   @override
   void initState() {
     super.initState();
+    _checkForUpdate();
+  }
 
-    // Nach 3 Sekunden automatisch zur ConductorPage navigieren
+  /// =========================
+  /// UPDATE CHECK
+  /// =========================
+  Future<void> _checkForUpdate() async {
+    final info = await PackageInfo.fromPlatform();
+    final currentVersion = info.version;
+
+    final channel = WebSocketChannel.connect(
+      Uri.parse('ws://ws.notenserver.duckdns.org'),
+    );
+
+    // Registrierung als Dirigent beim WebSocket-Server
+    channel.sink.add(jsonEncode({
+      'type': 'register',
+      'role': 'conductor',
+    }));
+
+    // Nachrichten empfangen
+    channel.stream.listen((msg) async {
+      try {
+        final data = jsonDecode(msg);
+
+        if (data['type'] == 'release_announce' &&
+            data['app'] == 'dirigenten_application' &&
+            data['version'] != currentVersion) {
+          // Neue Version gefunden → APK laden & installieren
+          await _downloadAndInstall(data['apkUrl']);
+        }
+      } catch (e) {
+        // Fehler loggen
+        print('[UPDATE] Fehler: $e');
+      }
+    });
+
+    // Nach 3 Sekunden weiter zur ConductorPage
     Future.delayed(const Duration(seconds: 3), () {
       if (!mounted) return;
       Navigator.pushReplacement(
@@ -61,10 +104,27 @@ class _SplashLandingState extends State<SplashLanding> {
     });
   }
 
-  @override
-  Widget build(BuildContext context) {
-    return const SplashScreen();
+  /// =========================
+  /// APK DOWNLOAD & INSTALL
+  /// =========================
+  Future<void> _downloadAndInstall(String url) async {
+    try {
+      final dir = await getExternalStorageDirectory();
+      final file = File('${dir!.path}/update.apk');
+
+      // APK herunterladen
+      final res = await http.get(Uri.parse(url));
+      await file.writeAsBytes(res.bodyBytes);
+
+      // Android Installer Dialog
+      await OpenFilex.open(file.path);
+    } catch (e) {
+      print('[UPDATE] Fehler beim Download/Install: $e');
+    }
   }
+
+  @override
+  Widget build(BuildContext context) => const SplashScreen();
 }
 
 /// =========================
@@ -132,7 +192,6 @@ class _SplashScreenState extends State<SplashScreen>
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  // Kreis mit Musik-Icon
                   Container(
                     padding: const EdgeInsets.all(28),
                     decoration: BoxDecoration(
@@ -153,8 +212,6 @@ class _SplashScreenState extends State<SplashScreen>
                     ),
                   ),
                   const SizedBox(height: 28),
-
-                  // App Name
                   const Text(
                     'Marschpad',
                     style: TextStyle(
@@ -165,8 +222,6 @@ class _SplashScreenState extends State<SplashScreen>
                     ),
                   ),
                   const SizedBox(height: 6),
-
-                  // Untertitel
                   Text(
                     'Musikverein Scharrel',
                     style: TextStyle(
@@ -176,8 +231,6 @@ class _SplashScreenState extends State<SplashScreen>
                     ),
                   ),
                   const SizedBox(height: 40),
-
-                  // Ladeindikator
                   const SizedBox(
                     width: 36,
                     height: 36,
