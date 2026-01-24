@@ -7,22 +7,22 @@ environment:
   sdk: ">=2.18.0 <4.0.0"
 
 dependencies:
-  lottie: ^2.3.0
+  lottie: ^3.3.2
   flutter:
     sdk: flutter
-  flutter_dotenv: ^5.1.0
+  flutter_dotenv: ^6.0.0
   shared_preferences: ^2.0.15
   path_provider: ^2.0.12
-  http: ^0.13.6
-  web_socket_channel: ^2.2.0
-  uuid: ^3.0.7
+  http: ^1.6.0
+  web_socket_channel: ^3.0.3
+  uuid: ^4.5.2
   open_filex: ^4.4.0
-  package_info_plus: ^5.0.1
+  package_info_plus: ^9.0.0
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
-  flutter_launcher_icons: ^0.11.0 
+  flutter_launcher_icons: ^0.14.4 
 
 flutter:
   uses-material-design: true
