@@ -3,28 +3,63 @@ name: Android Release
 on:
   push:
     tags:
-      - 'v*.*.*'
-
-permissions:
-  contents: write   # erlaubt Push & Release
-  packages: write   # optional, falls du Packages veröffentlichen willst
+      - "v*"
 
 jobs:
-  build-release:
+  build:
     runs-on: ubuntu-latest
+
     steps:
-      - uses: actions/checkout@v4
+      # ================= CHECKOUT =================
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-      - uses: subosito/flutter-action@v2
+      # ================= FLUTTER =================
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
         with:
-          channel: stable
+          flutter-version: '3.19.0'
 
-      - run: flutter pub get
-      - run: flutter build apk --release
+      - name: Install dependencies
+        run: flutter pub get
 
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          files: build/app/outputs/flutter-apk/app-release.apk
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # ================= BUILD =================
+      - name: Build APK (release)
+        run: flutter build apk --release
+
+      # ================= VERSION =================
+      - name: Read app version
+        id: version
+        run: |
+          VERSION=$(grep '^version:' pubspec.yaml | awk '{print $2}')
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      # ================= RENAME =================
+      - name: Rename APK
+        run: |
+          mv build/app/outputs/flutter-apk/app-release.apk \
+          dirigenten_application-${{ steps.version.outputs.version }}.apk
+
+      # ================= NEXTCLOUD =================
+      - name: Ensure releases folder exists
+        run: |
+          curl -u "${{ secrets.NC_USER }}:${{ secrets.NC_PASS }}" \
+               -X MKCOL \
+               "https://cloud.notenserver.duckdns.org/remote.php/dav/files/mwesterh/releases" \
+          || true
+
+      - name: Upload APK to Nextcloud (WebDAV)
+        run: |
+          curl -u "${{ secrets.NC_USER }}:${{ secrets.NC_PASS }}" \
+               -T dirigenten_application-${{ steps.version.outputs.version }}.apk \
+               "https://cloud.notenserver.duckdns.org/remote.php/dav/files/mwesterh/releases/dirigenten_application-${{ steps.version.outputs.version }}.apk"
+
+      # ================= NOTEN SERVER =================
+      - name: Notify Noten Server (WebSocket)
+        run: |
+          echo '{
+            "type": "release_announce",
+            "app": "dirigenten_application",
+            "version": "${{ steps.version.outputs.version }}",
+            "apkUrl": "https://cloud.notenserver.duckdns.org/s/EjyiF5P2K76kHsC/dirigenten_application-${{ steps.version.outputs.version }}.apk"
+          }' | websocat ws://ws.notenserver.duckdns.org
