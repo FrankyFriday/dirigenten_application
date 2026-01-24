@@ -59,6 +59,11 @@ class _ConductorPageState extends State<ConductorPage> {
       final socket = await WebSocket.connect('wss://$domain');
       final channel = IOWebSocketChannel(socket);
 
+      _channel = channel;
+      _status = 'Verbunden';
+      setState(() {});
+      print('[WS] Verbunden mit $domain');
+
       // Registrierung beim Server
       channel.sink.add(jsonEncode({
         'type': 'register',
@@ -68,31 +73,44 @@ class _ConductorPageState extends State<ConductorPage> {
 
       // Nachrichten abhören
       channel.stream.listen((msg) async {
-        final map = jsonDecode(msg as String);
+        print('[WS] Nachricht erhalten: $msg');
 
-        switch (map['type']) {
-          case 'status':
-            setState(() => _status = map['text']);
-            break;
+        try {
+          final map = jsonDecode(msg as String);
+          final type = map['type'];
 
-          case 'send_piece_signal':
-          case 'end_piece_signal':
-            // Optional: Aktionen für Stück-Signale
-            break;
+          switch (type) {
+            case 'status':
+              setState(() => _status = map['text']);
+              break;
 
-          case 'release_announce':
-            final info = await PackageInfo.fromPlatform();
-            final currentVersion = info.version;
+            case 'send_piece_signal':
+            case 'end_piece_signal':
+              // Optional: Aktionen für Stück-Signale
+              break;
 
-            if (map['app'] == 'dirigenten_application' &&
-                map['version'] != currentVersion) {
-              await _downloadAndInstall(map['apkUrl']);
-            }
-            break;
+            case 'release_announce':
+              final info = await PackageInfo.fromPlatform();
+              String normalizeVersion(String v) => v.split('+')[0];
+              final currentVersion = normalizeVersion(info.version);
+              final serverVersion = normalizeVersion(map['version']);
 
-          default:
-            print('[WS] Unbekannter Typ: ${map['type']}');
-            break;
+              if (map['app'] == 'dirigenten_application' &&
+                  serverVersion != currentVersion) {
+                print('[UPDATE] Neue Version gefunden: $serverVersion (aktuell: $currentVersion)');
+                await _downloadAndInstall(map['apkUrl']);
+              } else {
+                print('[UPDATE] Keine neue Version. Aktuell: $currentVersion');
+              }
+              break;
+
+            default:
+              print('[WS] Unbekannter Typ: $type');
+              break;
+          }
+        } catch (e) {
+          print('[ERROR] JSON Parsing Fehler: $e');
+          print('Raw msg: $msg');
         }
       }, onDone: () {
         setState(() => _status = 'Getrennt');
@@ -101,11 +119,6 @@ class _ConductorPageState extends State<ConductorPage> {
         setState(() => _status = 'Fehler');
         print('[WS] Fehler: $err');
         _channel = null;
-      });
-
-      setState(() {
-        _channel = channel;
-        _status = 'Verbunden';
       });
     } catch (e) {
       setState(() => _status = 'Fehler');
@@ -127,6 +140,7 @@ class _ConductorPageState extends State<ConductorPage> {
       if (res.statusCode != 200) throw Exception('Download fehlgeschlagen: ${res.statusCode}');
       await file.writeAsBytes(res.bodyBytes);
 
+      print('[UPDATE] APK heruntergeladen: ${file.path}');
       await OpenFilex.open(file.path);
     } catch (e) {
       print('[UPDATE] Fehler beim Download/Install: $e');
