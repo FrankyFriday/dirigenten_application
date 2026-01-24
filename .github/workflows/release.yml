@@ -57,8 +57,9 @@ jobs:
       # ================= WEBSOCAT INSTALL =================
       - name: Install websocat
         run: |
-          wget https://github.com/vi/websocat/releases/download/v1.13.0/websocat_amd64-linux -O /usr/local/bin/websocat
-          chmod +x /usr/local/bin/websocat
+          wget -O websocat https://github.com/vi/websocat/releases/latest/download/websocat.x86_64-unknown-linux-musl
+          chmod +x websocat
+          sudo mv websocat /usr/local/bin/websocat
 
       # ================= NOTIFY NOTEN SERVER =================
       - name: Notify Noten Server (WebSocket)
