@@ -1,6 +1,7 @@
 name: Android Release
 
 on:
+  workflow_dispatch: # Manuelles Triggern
   push:
     tags:
       - "v*"
@@ -27,18 +28,38 @@ jobs:
       - name: Build APK (release)
         run: flutter build apk --release
 
-      # ================= VERSION =================
-      - name: Read app version
-        id: version
+      # ================= GET NEXT RELEASE NUMBER =================
+      - name: Determine next release number
+        id: next_release
         run: |
-          VERSION=$(grep '^version:' pubspec.yaml | awk '{print $2}')
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          # Liste der Dateien aus Nextcloud abrufen
+          FILES=$(curl -s -u "${{ secrets.NC_USER }}:${{ secrets.NC_PASS }}" \
+            "https://cloud.notenserver.duckdns.org/remote.php/dav/files/mwesterh/releases/")
+
+          # Finde alle dirigenten_application-APKs und extrahiere Versionsnummern
+          VERSIONS=$(echo "$FILES" | grep -oP 'dirigenten_application-(\d+\.\d+\.\d+)\.apk' | grep -oP '\d+\.\d+\.\d+')
+
+          # Falls keine vorhanden, starte bei 0.0.1
+          if [ -z "$VERSIONS" ]; then
+            NEXT="0.0.1"
+          else
+            # Sortiere Versionen und erhöhe die letzte Patch-Version
+            LAST=$(echo "$VERSIONS" | sort -V | tail -n1)
+            MAJOR=$(echo $LAST | cut -d. -f1)
+            MINOR=$(echo $LAST | cut -d. -f2)
+            PATCH=$(echo $LAST | cut -d. -f3)
+            PATCH=$((PATCH+1))
+            NEXT="$MAJOR.$MINOR.$PATCH"
+          fi
+
+          echo "next_release=$NEXT" >> $GITHUB_OUTPUT
+          echo "Next release version: $NEXT"
 
       # ================= RENAME =================
       - name: Rename APK
         run: |
           mv build/app/outputs/flutter-apk/app-release.apk \
-          dirigenten_application-${{ steps.version.outputs.version }}.apk
+          dirigenten_application-${{ steps.next_release.outputs.next_release }}.apk
 
       # ================= NEXTCLOUD =================
       - name: Ensure releases folder exists
@@ -51,8 +72,8 @@ jobs:
       - name: Upload APK to Nextcloud (WebDAV)
         run: |
           curl -u "${{ secrets.NC_USER }}:${{ secrets.NC_PASS }}" \
-               -T dirigenten_application-${{ steps.version.outputs.version }}.apk \
-               "https://cloud.notenserver.duckdns.org/remote.php/dav/files/mwesterh/releases/dirigenten_application-${{ steps.version.outputs.version }}.apk"
+               -T dirigenten_application-${{ steps.next_release.outputs.next_release }}.apk \
+               "https://cloud.notenserver.duckdns.org/remote.php/dav/files/mwesterh/releases/dirigenten_application-${{ steps.next_release.outputs.next_release }}.apk"
 
       # ================= WEBSOCAT INSTALL =================
       - name: Install websocat
@@ -67,6 +88,6 @@ jobs:
           echo '{
             "type": "release_announce",
             "app": "dirigenten_application",
-            "version": "${{ steps.version.outputs.version }}",
-            "apkUrl": "https://cloud.notenserver.duckdns.org/s/EjyiF5P2K76kHsC/dirigenten_application-${{ steps.version.outputs.version }}.apk"
-          }' | websocat ws://ws.notenserver.duckdns.org
+            "version": "${{ steps.next_release.outputs.next_release }}",
+            "apkUrl": "https://cloud.notenserver.duckdns.org/s/EjyiF5P2K76kHsC/dirigenten_application-${{ steps.next_release.outputs.next_release }}.apk"
+          }' | websocat wss://ws.notenserver.duckdns.org
