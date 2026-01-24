@@ -86,9 +86,5 @@ jobs:
       # ================= NOTIFY NOTEN SERVER =================
       - name: Notify Noten Server (WebSocket)
         run: |
-          echo '{
-            "type": "release_announce",
-            "app": "dirigenten_application",
-            "version": "${{ steps.next_release.outputs.next_release }}",
-            "apkUrl": "https://cloud.notenserver.duckdns.org/s/EjyiF5P2K76kHsC/dirigenten_application-${{ steps.next_release.outputs.next_release }}.apk"
-          }' | websocat wss://ws.notenserver.duckdns.org
+          echo -n '{"type":"release_announce","app":"dirigenten_application","version":"${{ steps.next_release.outputs.next_release }}","apkUrl":"https://cloud.notenserver.duckdns.org/s/EjyiF5P2K76kHsC/dirigenten_application-${{ steps.next_release.outputs.next_release }}.apk"}' \
+          | websocat wss://ws.notenserver.duckdns.org
