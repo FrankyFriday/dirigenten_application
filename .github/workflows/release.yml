@@ -18,7 +18,7 @@ jobs:
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.38.7'
+          flutter-version: 'latest'
 
       - name: Install dependencies
         run: flutter pub get
@@ -54,7 +54,13 @@ jobs:
                -T dirigenten_application-${{ steps.version.outputs.version }}.apk \
                "https://cloud.notenserver.duckdns.org/remote.php/dav/files/mwesterh/releases/dirigenten_application-${{ steps.version.outputs.version }}.apk"
 
-      # ================= NOTEN SERVER =================
+      # ================= WEBSOCAT INSTALL =================
+      - name: Install websocat
+        run: |
+          wget https://github.com/vi/websocat/releases/download/v1.13.0/websocat_amd64-linux -O /usr/local/bin/websocat
+          chmod +x /usr/local/bin/websocat
+
+      # ================= NOTIFY NOTEN SERVER =================
       - name: Notify Noten Server (WebSocket)
         run: |
           echo '{
