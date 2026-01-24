@@ -32,12 +32,13 @@ jobs:
       - name: Determine next release number
         id: next_release
         run: |
-          # Liste der Dateien aus Nextcloud abrufen
-          FILES=$(curl -s -u "${{ secrets.NC_USER }}:${{ secrets.NC_PASS }}" \
+          # Liste der Dateien aus Nextcloud abrufen (XML)
+          FILES_XML=$(curl -s -u "${{ secrets.NC_USER }}:${{ secrets.NC_PASS }}" \
+            -X PROPFIND \
             "https://cloud.notenserver.duckdns.org/remote.php/dav/files/mwesterh/releases/")
 
-          # Finde alle dirigenten_application-APKs und extrahiere Versionsnummern
-          VERSIONS=$(echo "$FILES" | grep -oP 'dirigenten_application-(\d+\.\d+\.\d+)\.apk' | grep -oP '\d+\.\d+\.\d+')
+          # Extrahiere alle dirigenten_application-APKs aus XML
+          VERSIONS=$(echo "$FILES_XML" | grep -oP 'dirigenten_application-\K(\d+\.\d+\.\d+)(?=\.apk)')
 
           # Falls keine vorhanden, starte bei 0.0.1
           if [ -z "$VERSIONS" ]; then
