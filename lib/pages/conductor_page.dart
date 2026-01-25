@@ -10,6 +10,7 @@ import 'package:package_info_plus/package_info_plus.dart';
 import 'package:http/http.dart' as http;
 import 'package:path_provider/path_provider.dart';
 import 'package:open_filex/open_filex.dart';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
 
 class ConductorPage extends StatefulWidget {
   const ConductorPage({super.key});
@@ -129,23 +130,35 @@ class _ConductorPageState extends State<ConductorPage> {
   /// =========================
   /// APK DOWNLOAD & INSTALL
   /// =========================
-  Future<void> _downloadAndInstall(String url) async {
-    try {
-      final dir = await getExternalStorageDirectory();
-      if (dir == null) throw Exception('Kein Speicherverzeichnis gefunden');
+Future<void> _downloadAndInstall(String url) async {
+  try {
+    final dir = await getApplicationDocumentsDirectory();
 
-      final file = File('${dir.path}/update.apk');
-      final res = await http.get(Uri.parse(url));
+    final file = File('${dir.path}/update.apk');
 
-      if (res.statusCode != 200) throw Exception('Download fehlgeschlagen: ${res.statusCode}');
-      await file.writeAsBytes(res.bodyBytes);
+    // TODO: Benutzername und Passwort eintragen (WebDAV-Zugang)
+    final String username = dotenv.env['NEXTCLOUD_USER'] ?? '';
+    final String password = dotenv.env['NEXTCLOUD_PASSWORD'] ?? '';
 
-      print('[UPDATE] APK heruntergeladen: ${file.path}');
-      await OpenFilex.open(file.path);
-    } catch (e) {
-      print('[UPDATE] Fehler beim Download/Install: $e');
+    final headers = {
+      'Authorization': 'Basic ' + base64Encode(utf8.encode('$username:$password')),
+    };
+
+    final res = await http.get(Uri.parse(url), headers: headers);
+
+    if (res.statusCode != 200) {
+      throw Exception('Download fehlgeschlagen: ${res.statusCode}');
     }
+
+    await file.writeAsBytes(res.bodyBytes);
+    print('[UPDATE] APK heruntergeladen: ${file.path}');
+
+    await OpenFilex.open(file.path);
+  } catch (e) {
+    print('[UPDATE] Fehler beim Download/Install: $e');
   }
+}
+
 
   /// =========================
   /// Stück senden
