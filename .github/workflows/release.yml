@@ -24,27 +24,34 @@ jobs:
       - name: Install dependencies
         run: flutter pub get
 
+      # ================= RELEASE KEYSTORE =================
+      - name: Setup Keystore
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+        run: |
+          echo "$KEYSTORE_BASE64" | base64 --decode > android/app/dirigenten-release.jks
+          echo "Keystore erstellt: android/app/dirigenten-release.jks"
+
       # ================= BUILD =================
       - name: Build APK (release)
-        run: flutter build apk --release
+        run: |
+          flutter build apk --release \
+            --build-name=${{ steps.next_release.outputs.next_release }} \
+            --build-number=$(date +%s)
 
       # ================= GET NEXT RELEASE NUMBER =================
       - name: Determine next release number
         id: next_release
         run: |
-          # Liste der Dateien aus Nextcloud abrufen (XML)
           FILES_XML=$(curl -s -u "${{ secrets.NC_USER }}:${{ secrets.NC_PASS }}" \
             -X PROPFIND \
             "https://cloud.notenserver.duckdns.org/remote.php/dav/files/mwesterh/releases/")
 
-          # Extrahiere alle dirigenten_application-APKs aus XML
           VERSIONS=$(echo "$FILES_XML" | grep -oP 'dirigenten_application-\K(\d+\.\d+\.\d+)(?=\.apk)')
 
-          # Falls keine vorhanden, starte bei 0.0.1
           if [ -z "$VERSIONS" ]; then
             NEXT="0.0.1"
           else
-            # Sortiere Versionen und erhöhe die letzte Patch-Version
             LAST=$(echo "$VERSIONS" | sort -V | tail -n1)
             MAJOR=$(echo $LAST | cut -d. -f1)
             MINOR=$(echo $LAST | cut -d. -f2)
