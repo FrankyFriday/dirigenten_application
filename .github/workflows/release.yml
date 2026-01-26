@@ -1,7 +1,7 @@
 name: Android Release
 
 on:
-  workflow_dispatch: # Manuelles Triggern
+  workflow_dispatch:
   push:
     tags:
       - "v*"
