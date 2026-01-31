@@ -21,6 +21,17 @@ jobs:
         with:
           flutter-version: '3.38.7'
 
+      # ================= CACHE DEPENDENCIES =================
+      - name: Cache Flutter Pub
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.pub-cache
+            .packages
+          key: ${{ runner.os }}-flutter-${{ hashFiles('**/pubspec.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-flutter-
+
       - name: Install dependencies
         run: flutter pub get
 
@@ -29,15 +40,9 @@ jobs:
         env:
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
         run: |
-          echo "$KEYSTORE_BASE64" | base64 --decode > android/app/dirigenten-release.jks
-          echo "Keystore erstellt: android/app/dirigenten-release.jks"
-
-      # ================= BUILD =================
-      - name: Build APK (release)
-        run: |
-          flutter build apk --release \
-            --build-name=${{ steps.next_release.outputs.next_release }} \
-            --build-number=$(date +%s)
+          mkdir -p android
+          echo "$KEYSTORE_BASE64" | base64 --decode > android/dirigenten-release.jks
+          ls -l android/
 
       # ================= GET NEXT RELEASE NUMBER =================
       - name: Determine next release number
@@ -46,9 +51,7 @@ jobs:
           FILES_XML=$(curl -s -u "${{ secrets.NC_USER }}:${{ secrets.NC_PASS }}" \
             -X PROPFIND \
             "https://cloud.notenserver.duckdns.org/remote.php/dav/files/mwesterh/releases/")
-
           VERSIONS=$(echo "$FILES_XML" | grep -oP 'dirigenten_application-\K(\d+\.\d+\.\d+)(?=\.apk)')
-
           if [ -z "$VERSIONS" ]; then
             NEXT="0.0.1"
           else
@@ -59,17 +62,25 @@ jobs:
             PATCH=$((PATCH+1))
             NEXT="$MAJOR.$MINOR.$PATCH"
           fi
-
           echo "next_release=$NEXT" >> $GITHUB_OUTPUT
           echo "Next release version: $NEXT"
 
-      # ================= RENAME =================
+      # ================= BUILD =================
+      - name: Build APK (release)
+        run: |
+          flutter clean
+          flutter build apk --release \
+            --build-name=${{ steps.next_release.outputs.next_release }} \
+            --build-number=$(date +%s) \
+            --no-tree-shake-icons
+
+      # ================= RENAME APK =================
       - name: Rename APK
         run: |
           mv build/app/outputs/flutter-apk/app-release.apk \
           dirigenten_application-${{ steps.next_release.outputs.next_release }}.apk
 
-      # ================= NEXTCLOUD =================
+      # ================= NEXTCLOUD UPLOAD =================
       - name: Ensure releases folder exists
         run: |
           curl -u "${{ secrets.NC_USER }}:${{ secrets.NC_PASS }}" \
@@ -83,15 +94,9 @@ jobs:
                -T dirigenten_application-${{ steps.next_release.outputs.next_release }}.apk \
                "https://cloud.notenserver.duckdns.org/remote.php/dav/files/mwesterh/releases/dirigenten_application-${{ steps.next_release.outputs.next_release }}.apk"
 
-      # ================= WEBSOCAT INSTALL =================
-      - name: Install websocat
-        run: |
-          wget -O websocat https://github.com/vi/websocat/releases/latest/download/websocat.x86_64-unknown-linux-musl
-          chmod +x websocat
-          sudo mv websocat /usr/local/bin/websocat
-
       # ================= NOTIFY NOTEN SERVER =================
       - name: Notify Noten Server (WebSocket)
         run: |
-          echo -n '{"type":"release_announce","app":"dirigenten_application","version":"${{ steps.next_release.outputs.next_release }}","apkUrl":"https://cloud.notenserver.duckdns.org/remote.php/dav/files/mwesterh/releases/dirigenten_application-${{ steps.next_release.outputs.next_release }}.apk"}' \
-          | websocat wss://ws.notenserver.duckdns.org
+          wget -O websocat https://github.com/vi/websocat/releases/latest/download/websocat.x86_64-unknown-linux-musl
+          chmod +x websocat
+          ./websocat -n1 wss://ws.notenserver.duckdns.org <<< '{"type":"release_announce","app":"dirigenten_application","version":"${{ steps.next_release.outputs.next_release }}","apkUrl":"https://cloud.notenserver.duckdns.org/remote.php/dav/files/mwesterh/releases/dirigenten_application-${{ steps.next_release.outputs.next_release }}.apk"}'
