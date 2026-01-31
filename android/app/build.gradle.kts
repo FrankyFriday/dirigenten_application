@@ -15,19 +15,17 @@ android {
     }
 
     kotlinOptions {
-        // Kotlin Compiler Optionen korrekt setzen
         jvmTarget = "17"
     }
 
     signingConfigs {
         create("release") {
-            keyAlias = "dirigenten"
+            keyAlias = "dirigenten_key"
             keyPassword = "Franky-posaune03"
-            storeFile = file("dirigenten-release.jks")
+            storeFile = file("../dirigenten-release.jks")
             storePassword = "Franky-posaune03"
         }
     }
-
 
     defaultConfig {
         applicationId = "com.example.dirigenten_application"
