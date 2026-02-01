@@ -35,14 +35,31 @@ jobs:
       - name: Install dependencies
         run: flutter pub get
 
-      # ================= RELEASE KEYSTORE =================
+      # ================= KEYSTORE =================
       - name: Setup Keystore
         env:
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
         run: |
-          mkdir -p android
-          echo "$KEYSTORE_BASE64" | base64 --decode > android/dirigenten-release.jks
-          ls -l android/
+          mkdir -p android/app
+          echo "$KEYSTORE_BASE64" | base64 --decode > android/app/dirigenten-release.jks
+          ls -l android/app
+
+      # ================= KEY.PROPERTIES =================
+      - name: Create key.properties
+        run: |
+          cat <<EOF > android/key.properties
+          storePassword=${{ secrets.KEYSTORE_PASSWORD }}
+          keyPassword=${{ secrets.KEY_PASSWORD }}
+          keyAlias=${{ secrets.KEY_ALIAS }}
+          storeFile=dirigenten-release.jks
+          EOF
+
+      # ================= OPTIONAL DEBUG =================
+      - name: Verify keystore alias
+        run: |
+          keytool -list \
+            -keystore android/app/dirigenten-release.jks \
+            -storepass "${{ secrets.KEYSTORE_PASSWORD }}"
 
       # ================= GET NEXT RELEASE NUMBER =================
       - name: Determine next release number
@@ -78,9 +95,9 @@ jobs:
       - name: Rename APK
         run: |
           mv build/app/outputs/flutter-apk/app-release.apk \
-          dirigenten_application-${{ steps.next_release.outputs.next_release }}.apk
+             dirigenten_application-${{ steps.next_release.outputs.next_release }}.apk
 
-      # ================= NEXTCLOUD UPLOAD =================
+      # ================= NEXTCLOUD =================
       - name: Ensure releases folder exists
         run: |
           curl -u "${{ secrets.NC_USER }}:${{ secrets.NC_PASS }}" \
@@ -88,15 +105,16 @@ jobs:
                "https://cloud.notenserver.duckdns.org/remote.php/dav/files/mwesterh/releases" \
           || true
 
-      - name: Upload APK to Nextcloud (WebDAV)
+      - name: Upload APK to Nextcloud
         run: |
           curl -u "${{ secrets.NC_USER }}:${{ secrets.NC_PASS }}" \
                -T dirigenten_application-${{ steps.next_release.outputs.next_release }}.apk \
                "https://cloud.notenserver.duckdns.org/remote.php/dav/files/mwesterh/releases/dirigenten_application-${{ steps.next_release.outputs.next_release }}.apk"
 
-      # ================= NOTIFY NOTEN SERVER =================
+      # ================= NOTIFY SERVER =================
       - name: Notify Noten Server (WebSocket)
         run: |
           wget -O websocat https://github.com/vi/websocat/releases/latest/download/websocat.x86_64-unknown-linux-musl
           chmod +x websocat
-          ./websocat -n1 wss://ws.notenserver.duckdns.org <<< '{"type":"release_announce","app":"dirigenten_application","version":"${{ steps.next_release.outputs.next_release }}","apkUrl":"https://cloud.notenserver.duckdns.org/remote.php/dav/files/mwesterh/releases/dirigenten_application-${{ steps.next_release.outputs.next_release }}.apk"}'
+          ./websocat -n1 wss://ws.notenserver.duckdns.org <<< \
+          '{"type":"release_announce","app":"dirigenten_application","version":"${{ steps.next_release.outputs.next_release }}","apkUrl":"https://cloud.notenserver.duckdns.org/remote.php/dav/files/mwesterh/releases/dirigenten_application-${{ steps.next_release.outputs.next_release }}.apk"}'
