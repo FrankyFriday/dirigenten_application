@@ -1,6 +1,6 @@
 import 'dart:async';
-import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart'; // Für HapticFeedback
 import '../models/piece_group.dart';
 import '../services/nextcloud_service.dart';
 import '../services/conductor_socket.dart';
@@ -20,6 +20,7 @@ class _ConductorPageState extends State<ConductorPage> {
   final NextcloudService _service = NextcloudService();
   late final ConductorSocket _socket;
   late final String _clientId;
+  late final ScrollController _scrollController;
 
   List<PieceGroup> _pieces = [];
   List<PieceGroup> _filteredPieces = [];
@@ -36,6 +37,7 @@ class _ConductorPageState extends State<ConductorPage> {
   @override
   void initState() {
     super.initState();
+    _scrollController = ScrollController();
     _clientId = const Uuid().v4();
     _socket = ConductorSocket(
       clientId: _clientId,
@@ -72,6 +74,7 @@ class _ConductorPageState extends State<ConductorPage> {
       case 'status':
         setState(() => _status = msg['text']);
         break;
+
       case 'release_announce':
         final info = await PackageInfo.fromPlatform();
         String normalizeVersion(String v) => v.split('+')[0];
@@ -85,16 +88,20 @@ class _ConductorPageState extends State<ConductorPage> {
           print('[UPDATE] Keine neue Version. Aktuell: $currentVersion');
         }
         break;
+
       case 'ping':
         _socket.send({'type': 'pong'});
         break;
+
       case 'pong':
         _resetPongTimeout();
         break;
+
       case 'send_piece_signal':
       case 'end_piece_signal':
         print('[WS] Server-Signal empfangen: $type');
         break;
+
       default:
         print('[WS] Unbekannter Typ: $type');
     }
@@ -143,6 +150,7 @@ class _ConductorPageState extends State<ConductorPage> {
         _socket.send({'type': 'ping'});
         _startPongTimeout();
       } else {
+        if (!mounted) return;
         setState(() => _status = 'Getrennt');
       }
     });
@@ -151,6 +159,7 @@ class _ConductorPageState extends State<ConductorPage> {
   void _startPongTimeout() {
     _pongTimeoutTimer?.cancel();
     _pongTimeoutTimer = Timer(_pongTimeout, () {
+      if (!mounted) return;
       setState(() => _status = 'Getrennt (keine Antwort)');
       _socket.disconnect();
     });
@@ -165,13 +174,14 @@ class _ConductorPageState extends State<ConductorPage> {
     _pingTimer?.cancel();
     _pongTimeoutTimer?.cancel();
     _socket.disconnect();
+    _scrollController.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFFF7F8FC),
+      backgroundColor: const Color(0xFFF0F1F6),
       appBar: AppBar(
         elevation: 0,
         backgroundColor: Colors.deepPurple,
@@ -192,7 +202,10 @@ class _ConductorPageState extends State<ConductorPage> {
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
               child: ElevatedButton.icon(
-                onPressed: _endPiece,
+                onPressed: () {
+                  HapticFeedback.heavyImpact(); // Vibration beim Beenden
+                  _endPiece();
+                },
                 icon: const Icon(Icons.stop),
                 label: const Text(
                   'Stück beenden',
@@ -237,18 +250,27 @@ class _ConductorPageState extends State<ConductorPage> {
                           style: TextStyle(fontSize: 16, color: Colors.black54),
                         ),
                       )
-                    : ListView.builder(
-                        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
-                        itemCount: _filteredPieces.length,
-                        itemBuilder: (_, i) {
-                          final group = _filteredPieces[i];
-                          final isActive = _currentPiece == group;
-                          return _PieceCard(
-                            group: group,
-                            active: isActive,
-                            onSend: () => _sendPiece(group),
-                          );
-                        },
+                    : Scrollbar(
+                        controller: _scrollController,
+                        thumbVisibility: true,
+                        child: ListView.builder(
+                          controller: _scrollController,
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 20, vertical: 10),
+                          itemCount: _filteredPieces.length,
+                          itemBuilder: (_, i) {
+                            final group = _filteredPieces[i];
+                            final isActive = _currentPiece == group;
+                            return _PieceCard(
+                              group: group,
+                              active: isActive,
+                              onSend: () {
+                                HapticFeedback.lightImpact(); // Vibration beim Senden
+                                _sendPiece(group);
+                              },
+                            );
+                          },
+                        ),
                       ),
           ),
         ],
@@ -293,67 +315,121 @@ class _StatusHeader extends StatelessWidget {
               ),
             ),
           ),
-          ElevatedButton(
-            onPressed: onConnect,
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.deepPurple,
-              foregroundColor: Colors.white,
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+          if (!connected)
+            ElevatedButton(
+              onPressed: onConnect,
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.deepPurple,
+                foregroundColor: Colors.white,
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(14)),
+              ),
+              child: const Text('Verbinden', style: TextStyle(fontSize: 14)),
             ),
-            child: const Text('Verbinden', style: TextStyle(fontSize: 14)),
-          ),
         ],
       ),
     );
   }
 }
 
-class _PieceCard extends StatelessWidget {
+class _PieceCard extends StatefulWidget {
   final PieceGroup group;
   final bool active;
   final VoidCallback onSend;
 
-  const _PieceCard({required this.group, required this.active, required this.onSend});
+  const _PieceCard({
+    required this.group,
+    required this.active,
+    required this.onSend,
+  });
+
+  @override
+  State<_PieceCard> createState() => _PieceCardState();
+}
+
+class _PieceCardState extends State<_PieceCard> {
+  String? _selectedInstrumentVoice;
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.group.instrumentsAndVoices.isNotEmpty) {
+      _selectedInstrumentVoice = widget.group.instrumentsAndVoices[0];
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
     final activeColor = Colors.deepPurpleAccent.shade100;
+
     return Container(
       margin: const EdgeInsets.only(bottom: 16),
       decoration: BoxDecoration(
-        color: active ? activeColor : Colors.white,
+        color: widget.active ? activeColor : Colors.white,
         borderRadius: BorderRadius.circular(24),
         boxShadow: const [
           BoxShadow(color: Colors.black12, blurRadius: 16, offset: Offset(0, 6)),
         ],
-        border: active ? Border.all(color: Colors.deepPurple, width: 2) : null,
+        border: widget.active ? Border.all(color: Colors.deepPurple, width: 2) : null,
       ),
       child: Padding(
         padding: const EdgeInsets.all(22),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            // Stück-Name
             Text(
-              group.name,
+              widget.group.name,
               style: TextStyle(
                 fontSize: 19,
                 fontWeight: FontWeight.w700,
-                color: active ? Colors.deepPurple : Colors.black87,
+                color: widget.active ? Colors.deepPurple : Colors.black87,
               ),
             ),
             const SizedBox(height: 16),
+
+            // Dropdown für Instrumente/Stimmen
+            if (widget.group.instrumentsAndVoices.isNotEmpty)
+              DropdownButtonFormField<String>(
+                value: _selectedInstrumentVoice,
+                decoration: InputDecoration(
+                  labelText: 'Instrument / Stimme',
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  contentPadding:
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                ),
+                items: widget.group.instrumentsAndVoices
+                    .map((iv) => DropdownMenuItem(
+                          value: iv,
+                          child: Text(iv),
+                        ))
+                    .toList(),
+                onChanged: (value) {
+                  setState(() {
+                    _selectedInstrumentVoice = value;
+                  });
+                },
+              ),
+
+            const SizedBox(height: 12),
+
             Align(
               alignment: Alignment.centerRight,
               child: ElevatedButton.icon(
-                onPressed: onSend,
+                onPressed: widget.onSend,
                 icon: const Icon(Icons.send, size: 18),
                 label: const Text('Senden'),
                 style: ElevatedButton.styleFrom(
                   backgroundColor: Colors.deepPurple,
                   foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(20)),
                   elevation: 6,
                   shadowColor: Colors.deepPurpleAccent.shade100,
                 ),
