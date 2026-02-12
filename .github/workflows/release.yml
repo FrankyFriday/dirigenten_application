@@ -82,6 +82,16 @@ jobs:
           echo "next_release=$NEXT" >> $GITHUB_OUTPUT
           echo "Next release version: $NEXT"
 
+      # GitHub Actions Schritt
+      - name: Create .env
+        run: |
+          cat <<EOF > .env
+          API_URL=${{ secrets.API_URL }}
+          NC_USER=${{ secrets.NC_USER }}
+          NC_PASS=${{ secrets.NC_PASS }}
+          EOF
+
+
       # ================= BUILD =================
       - name: Build APK (release)
         run: |
