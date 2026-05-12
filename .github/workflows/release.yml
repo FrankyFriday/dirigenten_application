@@ -82,6 +82,16 @@ jobs:
           echo "next_release=$NEXT" >> $GITHUB_OUTPUT
           echo "Next release version: $NEXT"
 
+      # GitHub Actions Schritt
+      - name: Create .env
+        run: |
+          cat <<EOF > .env
+          API_URL=${{ secrets.API_URL }}
+          NC_USER=${{ secrets.NC_USER }}
+          NC_PASS=${{ secrets.NC_PASS }}
+          EOF
+
+
       # ================= BUILD =================
       - name: Build APK (release)
         run: |
@@ -110,6 +120,43 @@ jobs:
           curl -u "${{ secrets.NC_USER }}:${{ secrets.NC_PASS }}" \
                -T dirigenten_application-${{ steps.next_release.outputs.next_release }}.apk \
                "https://cloud.notenserver.duckdns.org/remote.php/dav/files/mwesterh/releases/dirigenten_application-${{ steps.next_release.outputs.next_release }}.apk"
+
+      # ================= OCTOPUS DEPLOY =================
+      - name: Install Octopus CLI
+        run: |
+          apt-get update
+          apt-get install -y curl gnupg
+          curl -L https://github.com/OctopusDeploy/cli/releases/latest/download/octopus-linux-x64.tar.gz | tar xz
+          chmod +x octo
+
+      - name: Create Octopus Release
+        env:
+          OCTOPUS_URL: https://franky.octopus.app
+          OCTOPUS_API_KEY: ${{ secrets.OCTOPUS_API_KEY }}
+          OCTOPUS_SPACE: ${{ secrets.OCTOPUS_SPACE }}
+        run: |
+          ./octo create-release \
+            --project "dirigenten_application" \
+            --version "${{ steps.next_release.outputs.next_release }}" \
+            --server "$OCTOPUS_URL" \
+            --apiKey "$OCTOPUS_API_KEY" \
+            --space "$OCTOPUS_SPACE" \
+            --packageVersion "${{ steps.next_release.outputs.next_release }}" \
+            --releaseNotes "APK Release v${{ steps.next_release.outputs.next_release }}"
+
+      - name: Deploy Release to Octopus
+        env:
+          OCTOPUS_URL: https://franky.octopus.app
+          OCTOPUS_API_KEY: ${{ secrets.OCTOPUS_API_KEY }}
+          OCTOPUS_SPACE: ${{ secrets.OCTOPUS_SPACE }}
+        run: |
+          ./octo deploy-release \
+            --project "dirigenten_application" \
+            --version "${{ steps.next_release.outputs.next_release }}" \
+            --server "$OCTOPUS_URL" \
+            --apiKey "$OCTOPUS_API_KEY" \
+            --space "$OCTOPUS_SPACE" \
+            --deployTo "Production"
 
       # ================= NOTIFY SERVER =================
       - name: Notify Noten Server (WebSocket)
