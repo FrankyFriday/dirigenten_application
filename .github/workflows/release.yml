@@ -149,19 +149,15 @@ jobs:
           octo --version
 
       - name: Create Octopus Release
-        env:
-          OCTOPUS_URL: https://franky.octopus.app
-          OCTOPUS_API_KEY: ${{ secrets.OCTOPUS_API_KEY }}
-          OCTOPUS_SPACE: ${{ secrets.OCTOPUS_SPACE }}
         run: |
-          ./octo create-release \
+          octo create-release \
             --project "dirigenten_application" \
             --version "${{ steps.next_release.outputs.next_release }}" \
             --server "$OCTOPUS_URL" \
             --apiKey "$OCTOPUS_API_KEY" \
             --space "$OCTOPUS_SPACE" \
             --packageVersion "${{ steps.next_release.outputs.next_release }}" \
-            --releaseNotes "APK Release v${{ steps.next_release.outputs.next_release }}"
+            --releaseNotes "APK Release"
 
       - name: Deploy Release to Octopus
         env:
@@ -169,7 +165,7 @@ jobs:
           OCTOPUS_API_KEY: ${{ secrets.OCTOPUS_API_KEY }}
           OCTOPUS_SPACE: ${{ secrets.OCTOPUS_SPACE }}
         run: |
-          ./octo deploy-release \
+          octo deploy-release \
             --project "dirigenten_application" \
             --version "${{ steps.next_release.outputs.next_release }}" \
             --server "$OCTOPUS_URL" \
