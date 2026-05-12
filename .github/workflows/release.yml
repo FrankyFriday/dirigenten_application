@@ -149,6 +149,9 @@ jobs:
           octo --version
 
       - name: Create Octopus Release
+        env:
+          OCTOPUS_URL: https://franky.octopus.app
+          OCTOPUS_API_KEY: ${{ secrets.OCTOPUS_API_KEY }}
         run: |
           octo create-release \
             --project "dirigenten_application" \
