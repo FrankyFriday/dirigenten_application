@@ -1,34 +1,90 @@
-import 'dart:convert';
-import 'dart:io';
-import 'package:flutter_dotenv/flutter_dotenv.dart';
-import 'package:path_provider/path_provider.dart';
-import 'package:http/http.dart' as http;
-import 'package:open_filex/open_filex.dart';
+import 'dart:async';
+import 'package:package_info_plus/package_info_plus.dart';
+import '../models/update_info.dart';
+import '../repositories/update_repository.dart';
+import '../services/version_checker.dart';
+import '../services/download_service.dart';
+import '../utils/logger.dart';
 
+/// Main service for handling app updates.
+/// Coordinates version checking, downloading, and installation.
 class UpdateService {
-  static Future<void> downloadAndInstall(String url) async {
+  final UpdateRepository _repository;
+  final DownloadService _downloadService;
+
+  UpdateService(this._repository, this._downloadService);
+
+  /// Checks for available updates.
+  /// Returns UpdateInfo if a newer version is available, null otherwise.
+  Future<UpdateInfo?> checkForUpdate() async {
     try {
-      final dir = await getApplicationDocumentsDirectory();
-      final file = File('${dir.path}/update.apk');
+      UpdateLogger.info('Checking for updates...');
 
-      final username = dotenv.env['NEXTCLOUD_USER'] ?? '';
-      final password = dotenv.env['NEXTCLOUD_PASSWORD'] ?? '';
-
-      final headers = {
-        'Authorization': 'Basic ' + base64Encode(utf8.encode('$username:$password')),
-      };
-
-      final res = await http.get(Uri.parse(url), headers: headers);
-      if (res.statusCode != 200) {
-        throw Exception('Download fehlgeschlagen: ${res.statusCode}');
+      final updateInfo = await _repository.fetchUpdateInfo();
+      if (updateInfo == null) {
+        UpdateLogger.info('No update info available');
+        return null;
       }
 
-      await file.writeAsBytes(res.bodyBytes);
-      print('[UPDATE] APK heruntergeladen: ${file.path}');
+      final packageInfo = await PackageInfo.fromPlatform();
+      final currentVersion = packageInfo.version;
 
-      await OpenFilex.open(file.path);
+      UpdateLogger.info('Current version: $currentVersion, Latest version: ${updateInfo.version}');
+
+      if (VersionChecker.isNewerVersion(currentVersion, updateInfo.version)) {
+        UpdateLogger.info('New version available');
+        return updateInfo;
+      } else {
+        UpdateLogger.info('App is up to date');
+        return null;
+      }
     } catch (e) {
-      print('[UPDATE] Fehler beim Download/Install: $e');
+      UpdateLogger.error('Error checking for updates', e);
+      return null;
     }
+  }
+
+  /// Downloads the update file and returns the file path.
+  /// Provides progress updates via the stream controller.
+  Future<String?> downloadUpdate(
+    UpdateInfo updateInfo,
+    StreamController<double> progressController,
+  ) async {
+    try {
+      final fileName = DownloadService.generateFileName(updateInfo.version);
+      return await _downloadService.downloadFile(
+        updateInfo.url,
+        fileName,
+        progressController,
+      );
+    } catch (e) {
+      UpdateLogger.error('Error downloading update', e);
+      return null;
+    }
+  }
+
+  /// Retries an operation with exponential backoff.
+  static Future<T> retry<T>(
+    Future<T> Function() operation,
+    int maxRetries,
+    Duration initialDelay,
+  ) async {
+    int attempt = 0;
+    Duration delay = initialDelay;
+
+    while (attempt < maxRetries) {
+      try {
+        return await operation();
+      } catch (e) {
+        attempt++;
+        if (attempt >= maxRetries) {
+          rethrow;
+        }
+        UpdateLogger.warning('Retry $attempt failed, waiting ${delay.inSeconds}s');
+        await Future.delayed(delay);
+        delay *= 2; // Exponential backoff
+      }
+    }
+    throw Exception('Max retries exceeded');
   }
 }

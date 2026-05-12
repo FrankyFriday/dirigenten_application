@@ -19,6 +19,9 @@ dependencies:
   open_filex: ^4.4.0
   package_info_plus: ^9.0.0
   vibration: ^2.0.0
+  dio: ^5.4.0
+  flutter_riverpod: ^2.4.9
+  version: ^3.0.2
 
 dev_dependencies:
   flutter_test:

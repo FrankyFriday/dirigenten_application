@@ -77,16 +77,17 @@ class _ConductorPageState extends State<ConductorPage> {
 
       case 'release_announce':
         final info = await PackageInfo.fromPlatform();
-        String normalizeVersion(String v) => v.split('+')[0];
-        final currentVersion = normalizeVersion(info.version);
-        final serverVersion = normalizeVersion(msg['version']);
-        if (msg['app'] == 'dirigenten_application' &&
-            serverVersion != currentVersion) {
-          print('[UPDATE] Neue Version gefunden: $serverVersion');
-          await UpdateService.downloadAndInstall(msg['apkUrl']);
-        } else {
-          print('[UPDATE] Keine neue Version. Aktuell: $currentVersion');
-        }
+        // TODO: Integrate with new update system
+        // String normalizeVersion(String v) => v.split('+')[0];
+        // final currentVersion = normalizeVersion(info.version);
+        // final serverVersion = normalizeVersion(msg['version']);
+        // if (msg['app'] == 'dirigenten_application' &&
+        //     serverVersion != currentVersion) {
+        //   print('[UPDATE] Neue Version gefunden: $serverVersion');
+        //   await UpdateService.downloadAndInstall(msg['apkUrl']);
+        // } else {
+        //   print('[UPDATE] Keine neue Version. Aktuell: $currentVersion');
+        // }
         break;
 
       case 'ping':
@@ -393,7 +394,7 @@ class _PieceCardState extends State<_PieceCard> {
             // Dropdown für Instrumente/Stimmen
             if (widget.group.instrumentsAndVoices.isNotEmpty)
               DropdownButtonFormField<String>(
-                value: _selectedInstrumentVoice,
+                initialValue: _selectedInstrumentVoice,
                 decoration: InputDecoration(
                   labelText: 'Instrument / Stimme',
                   border: OutlineInputBorder(

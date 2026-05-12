@@ -1,6 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'pages/conductor_page.dart';
+import 'providers/update_providers.dart';
+import 'ui/update_dialog.dart';
+import 'models/update_info.dart';
 
 /// =========================
 /// APP ENTRY POINT
@@ -10,7 +14,7 @@ Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await dotenv.load(fileName: "assets/.env");
 
-  runApp(const MyApp());
+  runApp(const ProviderScope(child: MyApp()));
 }
 
 /// =========================
@@ -39,26 +43,47 @@ class MyApp extends StatelessWidget {
 /// =========================
 /// SPLASH LANDING
 /// =========================
-class SplashLanding extends StatefulWidget {
+class SplashLanding extends ConsumerStatefulWidget {
   const SplashLanding({super.key});
 
   @override
-  State<SplashLanding> createState() => _SplashLandingState();
+  ConsumerState<SplashLanding> createState() => _SplashLandingState();
 }
 
-class _SplashLandingState extends State<SplashLanding> {
+class _SplashLandingState extends ConsumerState<SplashLanding> {
   @override
   void initState() {
     super.initState();
 
-    // Nach 3 Sekunden automatisch zur ConductorPage navigieren
-    Future.delayed(const Duration(seconds: 3), () {
-      if (!mounted) return;
+    _checkForUpdates();
+  }
+
+  Future<void> _checkForUpdates() async {
+    final updateCheckNotifier = ref.read(updateCheckProvider.notifier);
+    await updateCheckNotifier.checkForUpdate();
+
+    final updateInfo = ref.read(updateCheckProvider).value;
+
+    if (updateInfo != null && mounted) {
+      final shouldUpdate = await showDialog<bool>(
+        context: context,
+        barrierDismissible: !updateInfo.mandatory,
+        builder: (_) => UpdateDialog(updateInfo: updateInfo),
+      );
+
+      if (shouldUpdate == true) {
+        // Update downloaded and installed, app may restart
+        return;
+      }
+    }
+
+    // Proceed to main app
+    if (mounted) {
       Navigator.pushReplacement(
         context,
         MaterialPageRoute(builder: (_) => const ConductorPage()),
       );
-    });
+    }
   }
 
   @override
