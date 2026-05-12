@@ -21,7 +21,7 @@ jobs:
         with:
           flutter-version: '3.38.7'
 
-      # ================= CACHE =================
+      # ================= CACHE DEPENDENCIES =================
       - name: Cache Flutter Pub
         uses: actions/cache@v3
         with:
@@ -41,28 +41,27 @@ jobs:
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
         run: |
           mkdir -p android/app
-          echo "$KEYSTORE_BASE64" | base64 -d > android/app/dirigenten_key.jks
-          file android/app/dirigenten_key.jks
+          echo "$KEYSTORE_BASE64" | base64 --decode > android/app/dirigenten_key.jks
+          ls -l android/app
 
       # ================= KEY.PROPERTIES =================
       - name: Create key.properties
         run: |
-          cat <<EOF > android/key.properties
+          cat <<EOF > android/app/key.properties
           storePassword=${{ secrets.KEYSTORE_PASSWORD }}
           keyPassword=${{ secrets.KEY_PASSWORD }}
           keyAlias=${{ secrets.KEY_ALIAS }}
-          storeFile=../app/dirigenten_key.jks
+          storeFile=dirigenten_key.jks
           EOF
 
       # ================= VERIFY KEYSTORE =================
       - name: Verify keystore alias
         run: |
-          keytool -list -v \
+          keytool -list \
             -keystore android/app/dirigenten_key.jks \
-            -storepass "${{ secrets.KEYSTORE_PASSWORD }}" \
-            -storetype JKS
+            -storepass "${{ secrets.KEYSTORE_PASSWORD }}"
 
-      # ================= VERSION =================
+      # ================= GET NEXT RELEASE NUMBER =================
       - name: Determine next release number
         id: next_release
         run: |
@@ -86,7 +85,7 @@ jobs:
           echo "next_release=$NEXT" >> $GITHUB_OUTPUT
           echo "Next release version: $NEXT"
 
-      # ================= ENV =================
+      # ================= CREATE .ENV =================
       - name: Create .env
         run: |
           cat <<EOF > .env
@@ -95,7 +94,7 @@ jobs:
           NC_PASS=${{ secrets.NC_PASS }}
           EOF
 
-      # ================= BUILD APK =================
+      # ================= BUILD =================
       - name: Build APK (release)
         run: |
           flutter clean
@@ -108,15 +107,15 @@ jobs:
       - name: Rename APK
         run: |
           mv build/app/outputs/flutter-apk/app-release.apk \
-             dirigenten_application-${{ steps.next_release.outputs.next_release }}.apk
+            dirigenten_application-${{ steps.next_release.outputs.next_release }}.apk
 
-      # ================= NEXTCLOUD UPLOAD =================
+      # ================= NEXTCLOUD =================
       - name: Ensure releases folder exists
         run: |
           curl -u "${{ secrets.NC_USER }}:${{ secrets.NC_PASS }}" \
             -X MKCOL \
             "https://cloud.notenserver.duckdns.org/remote.php/dav/files/mwesterh/releases" \
-          || true
+            || true
 
       - name: Upload APK to Nextcloud
         run: |
@@ -124,7 +123,7 @@ jobs:
             -T dirigenten_application-${{ steps.next_release.outputs.next_release }}.apk \
             "https://cloud.notenserver.duckdns.org/remote.php/dav/files/mwesterh/releases/dirigenten_application-${{ steps.next_release.outputs.next_release }}.apk"
 
-      # ================= OCTOPUS CLI =================
+      # ================= OCTOPUS DEPLOY =================
       - name: Install Octopus CLI
         run: |
           curl -L https://github.com/OctopusDeploy/cli/releases/latest/download/octopus-linux-x64.tar.gz -o octo.tar.gz
@@ -134,14 +133,13 @@ jobs:
 
           octo --version
 
-      # ================= OCTOPUS RELEASE =================
       - name: Create Octopus Release
         env:
           OCTOPUS_URL: https://franky.octopus.app
           OCTOPUS_API_KEY: ${{ secrets.OCTOPUS_API_KEY }}
           OCTOPUS_SPACE: ${{ secrets.OCTOPUS_SPACE }}
         run: |
-          octo create-release \
+          ./octo create-release \
             --project "dirigenten_application" \
             --version "${{ steps.next_release.outputs.next_release }}" \
             --server "$OCTOPUS_URL" \
@@ -156,7 +154,7 @@ jobs:
           OCTOPUS_API_KEY: ${{ secrets.OCTOPUS_API_KEY }}
           OCTOPUS_SPACE: ${{ secrets.OCTOPUS_SPACE }}
         run: |
-          octo deploy-release \
+          ./octo deploy-release \
             --project "dirigenten_application" \
             --version "${{ steps.next_release.outputs.next_release }}" \
             --server "$OCTOPUS_URL" \
@@ -164,11 +162,10 @@ jobs:
             --space "$OCTOPUS_SPACE" \
             --deployTo "Production"
 
-      # ================= WEBSOCKET NOTIFY =================
+      # ================= NOTIFY SERVER =================
       - name: Notify Noten Server (WebSocket)
         run: |
           wget -O websocat https://github.com/vi/websocat/releases/latest/download/websocat.x86_64-unknown-linux-musl
           chmod +x websocat
-
           ./websocat -n1 wss://ws.notenserver.duckdns.org <<< \
-          "{\"type\":\"release_announce\",\"app\":\"dirigenten_application\",\"version\":\"${{ steps.next_release.outputs.next_release }}\",\"apkUrl\":\"https://cloud.notenserver.duckdns.org/remote.php/dav/files/mwesterh/releases/dirigenten_application-${{ steps.next_release.outputs.next_release }}.apk\"}"
+            '{"type":"release_announce","app":"dirigenten_application","version":"${{ steps.next_release.outputs.next_release }}","apkUrl":"https://cloud.notenserver.duckdns.org/remote.php/dav/files/mwesterh/releases/dirigenten_application-${{ steps.next_release.outputs.next_release }}.apk"}'
