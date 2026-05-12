@@ -122,12 +122,13 @@ jobs:
                "https://cloud.notenserver.duckdns.org/remote.php/dav/files/mwesterh/releases/dirigenten_application-${{ steps.next_release.outputs.next_release }}.apk"
 
       # ================= OCTOPUS DEPLOY =================
-      - name: Install Octopus CLI
+      - name: Install GitHub CLI (recommended)
         run: |
-          apt-get update
-          apt-get install -y curl gnupg
-          curl -L https://github.com/OctopusDeploy/cli/releases/latest/download/octopus-linux-x64.tar.gz | tar xz
-          chmod +x octo
+          type -p curl >/dev/null || sudo apt-get install curl -y
+          curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | sudo tee /usr/share/keyrings/githubcli.gpg > /dev/null
+          echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli.gpg] https://cli.github.com/packages stable main" | sudo tee /etc/apt/sources.list.d/github-cli.list > /dev/null
+          sudo apt update
+          sudo apt install gh -y
 
       - name: Create Octopus Release
         env:
