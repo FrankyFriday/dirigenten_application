@@ -64,8 +64,11 @@ jobs:
       # ================= GET NEXT RELEASE NUMBER =================
       - name: Determine next release number
         id: next_release
+        env:
+          NC_USER: ${{ secrets.NC_USER }}
+          NC_PASS: ${{ secrets.NC_PASS }}
         run: |
-          FILES_XML=$(curl -s -u "${{ secrets.NC_USER }}:${{ secrets.NC_PASS }}" \
+          FILES_XML=$(curl -s -u "${NC_USER}:${NC_PASS}" \
             -X PROPFIND \
             "https://cloud.notenserver.duckdns.org/remote.php/dav/files/mwesterh/releases/")
 
@@ -86,12 +89,15 @@ jobs:
           echo "Next release version: $NEXT"
 
       # ================= CREATE .ENV =================
+      # WICHTIG: Nur Werte hier rein, die im APK landen DÜRFEN.
+      # NC_USER/NC_PASS wurden entfernt - die landen sonst im Klartext im
+      # kompilierten APK und lassen sich mit jedem Decompiler auslesen.
+      # Falls die App selbst Zugriff auf Nextcloud braucht, das über einen
+      # eigenen Server-Endpoint absichern statt Credentials im Client.
       - name: Create .env
         run: |
           cat <<EOF > .env
           API_URL=${{ secrets.API_URL }}
-          NC_USER=${{ secrets.NC_USER }}
-          NC_PASS=${{ secrets.NC_PASS }}
           EOF
 
       # ================= BUILD =================
@@ -111,56 +117,40 @@ jobs:
 
       # ================= NEXTCLOUD =================
       - name: Ensure releases folder exists
+        env:
+          NC_USER: ${{ secrets.NC_USER }}
+          NC_PASS: ${{ secrets.NC_PASS }}
         run: |
-          curl -u "${{ secrets.NC_USER }}:${{ secrets.NC_PASS }}" \
+          curl -u "${NC_USER}:${NC_PASS}" \
             -X MKCOL \
             "https://cloud.notenserver.duckdns.org/remote.php/dav/files/mwesterh/releases" \
             || true
 
       - name: Upload APK to Nextcloud
+        env:
+          NC_USER: ${{ secrets.NC_USER }}
+          NC_PASS: ${{ secrets.NC_PASS }}
         run: |
-          curl -u "${{ secrets.NC_USER }}:${{ secrets.NC_PASS }}" \
+          curl -u "${NC_USER}:${NC_PASS}" \
             -T dirigenten_application-${{ steps.next_release.outputs.next_release }}.apk \
             "https://cloud.notenserver.duckdns.org/remote.php/dav/files/mwesterh/releases/dirigenten_application-${{ steps.next_release.outputs.next_release }}.apk"
 
       # ================= OCTOPUS DEPLOY =================
       - name: Install Octopus CLI
-        run: |
-          set -e
-
-          OCTO_VERSION=$(curl -s https://api.github.com/repos/OctopusDeploy/cli/releases/latest | grep tag_name | cut -d '"' -f4)
-          echo "Latest version: $OCTO_VERSION"
-
-          curl -L "https://github.com/OctopusDeploy/cli/releases/download/${OCTO_VERSION}/octopus_${OCTO_VERSION#v}_linux_amd64.tar.gz" -o octo.tar.gz
-
-          mkdir octo-bin
-          tar -xzf octo.tar.gz -C octo-bin
-
-          ls -R octo-bin
-
-          # finde binary automatisch
-          chmod +x $(find octo-bin -type f -name "octo" -o -name "octopus" | head -n 1)
-          BIN=$(find octo-bin -type f -name "octo" -o -name "octopus" | head -n 1)
-
-          echo "Found binary: $BIN"
-
-          sudo mv "$BIN" /usr/local/bin/octo
-
-          octo --version
+        uses: OctopusDeploy/install-octopus-cli-action@v3
+        with:
+          version: latest
 
       - name: Create Octopus Release
         env:
           OCTOPUS_URL: https://franky.octopus.app
           OCTOPUS_API_KEY: ${{ secrets.OCTOPUS_API_KEY }}
+          OCTOPUS_SPACE: ${{ secrets.OCTOPUS_SPACE }}
         run: |
-          octo create-release \
+          octopus release create \
             --project "dirigenten_application" \
             --version "${{ steps.next_release.outputs.next_release }}" \
-            --server "$OCTOPUS_URL" \
-            --apiKey "$OCTOPUS_API_KEY" \
-            --space "$OCTOPUS_SPACE" \
-            --packageVersion "${{ steps.next_release.outputs.next_release }}" \
-            --releaseNotes "APK Release"
+            --release-notes "APK Release"
 
       - name: Deploy Release to Octopus
         env:
@@ -168,18 +158,16 @@ jobs:
           OCTOPUS_API_KEY: ${{ secrets.OCTOPUS_API_KEY }}
           OCTOPUS_SPACE: ${{ secrets.OCTOPUS_SPACE }}
         run: |
-          octo deploy-release \
+          octopus release deploy \
             --project "dirigenten_application" \
             --version "${{ steps.next_release.outputs.next_release }}" \
-            --server "$OCTOPUS_URL" \
-            --apiKey "$OCTOPUS_API_KEY" \
-            --space "$OCTOPUS_SPACE" \
-            --deployTo "Production"
+            --environment "Production"
 
       # ================= NOTIFY SERVER =================
       - name: Notify Noten Server (WebSocket)
         run: |
-          wget -O websocat https://github.com/vi/websocat/releases/latest/download/websocat.x86_64-unknown-linux-musl
+          WEBSOCAT_VERSION="v1.13.0"
+          wget -O websocat "https://github.com/vi/websocat/releases/download/${WEBSOCAT_VERSION}/websocat.x86_64-unknown-linux-musl"
           chmod +x websocat
           ./websocat -n1 wss://ws.notenserver.duckdns.org <<< \
             '{"type":"release_announce","app":"dirigenten_application","version":"${{ steps.next_release.outputs.next_release }}","apkUrl":"https://cloud.notenserver.duckdns.org/remote.php/dav/files/mwesterh/releases/dirigenten_application-${{ steps.next_release.outputs.next_release }}.apk"}'
