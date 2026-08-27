@@ -2,9 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'pages/conductor_page.dart';
-import 'providers/update_providers.dart';
-import 'ui/update_dialog.dart';
-import 'models/update_info.dart';
 
 /// =========================
 /// APP ENTRY POINT
@@ -12,7 +9,7 @@ import 'models/update_info.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await dotenv.load(fileName: ".env");
+  await dotenv.load(fileName: "assets/.env");
 
   runApp(const ProviderScope(child: MyApp()));
 }
@@ -43,47 +40,33 @@ class MyApp extends StatelessWidget {
 /// =========================
 /// SPLASH LANDING
 /// =========================
-class SplashLanding extends ConsumerStatefulWidget {
+class SplashLanding extends StatefulWidget {
   const SplashLanding({super.key});
 
   @override
-  ConsumerState<SplashLanding> createState() => _SplashLandingState();
+  State<SplashLanding> createState() => _SplashLandingState();
 }
 
-class _SplashLandingState extends ConsumerState<SplashLanding> {
+class _SplashLandingState extends State<SplashLanding> {
   @override
   void initState() {
     super.initState();
 
-    _checkForUpdates();
-  }
-
-  Future<void> _checkForUpdates() async {
-    final updateCheckNotifier = ref.read(updateCheckProvider.notifier);
-    await updateCheckNotifier.checkForUpdate();
-
-    final updateInfo = ref.read(updateCheckProvider).value;
-
-    if (updateInfo != null && mounted) {
-      final shouldUpdate = await showDialog<bool>(
-        context: context,
-        barrierDismissible: !updateInfo.mandatory,
-        builder: (_) => UpdateDialog(updateInfo: updateInfo),
-      );
-
-      if (shouldUpdate == true) {
-        // Update downloaded and installed, app may restart
-        return;
-      }
-    }
-
-    // Proceed to main app
-    if (mounted) {
+    // Hinweis: Der noten-server v2 stellt kein öffentliches update.json-
+    // Äquivalent bereit, gegen das hier synchron geprüft werden könnte
+    // (der authentifizierte GET /api/releases-Endpunkt ist nur für
+    // Octopus/CI gedacht, nicht für Clients). Stattdessen meldet der
+    // Server neue Releases per WebSocket ('release_announce'), sobald die
+    // App auf der ConductorPage verbunden ist – dort wird der Update-
+    // Dialog bei Bedarf angezeigt. Der Splash-Screen leitet daher nach
+    // kurzer Anzeigezeit direkt weiter.
+    Future.delayed(const Duration(milliseconds: 1400), () {
+      if (!mounted) return;
       Navigator.pushReplacement(
         context,
         MaterialPageRoute(builder: (_) => const ConductorPage()),
       );
-    }
+    });
   }
 
   @override
@@ -162,10 +145,10 @@ class _SplashScreenState extends State<SplashScreen>
                     padding: const EdgeInsets.all(28),
                     decoration: BoxDecoration(
                       shape: BoxShape.circle,
-                      color: Colors.white.withOpacity(0.12),
+                      color: Colors.white.withValues(alpha: 0.12),
                       boxShadow: [
                         BoxShadow(
-                          color: Colors.black.withOpacity(0.3),
+                          color: Colors.black.withValues(alpha: 0.3),
                           blurRadius: 25,
                           offset: const Offset(0, 10),
                         ),
@@ -196,7 +179,7 @@ class _SplashScreenState extends State<SplashScreen>
                     'Musikverein Scharrel',
                     style: TextStyle(
                       fontSize: 16,
-                      color: Colors.white.withOpacity(0.75),
+                      color: Colors.white.withValues(alpha: 0.75),
                       letterSpacing: 1.4,
                     ),
                   ),
