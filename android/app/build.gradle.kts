@@ -28,12 +28,6 @@ android {
 
     buildTypes {
         getByName("release") {
-            // Kein eigener Signing-Key: Release-Builds werden mit dem
-            // Standard-Debug-Key signiert. Das reicht für interne
-            // Verteilung per Nextcloud/APK-Direktinstallation. Wird
-            // später ein eigener Play-Store-fähiger Key gebraucht, kann
-            // hier wieder eine signingConfig mit key.properties ergänzt
-            // werden.
             isMinifyEnabled = false
             isShrinkResources = false
         }
