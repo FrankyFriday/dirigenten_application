@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'package:web_socket_channel/io.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
+import '../config/app_config.dart';
 
 typedef WSStatusCallback = void Function(String status);
 typedef WSMessageCallback = void Function(Map<String, dynamic> message);
@@ -19,7 +20,7 @@ class ConductorSocket {
   });
 
   Future<void> connect() async {
-    const domain = 'ws.notenserver.duckdns.org';
+    const domain = AppConfig.wsDomain;
     onStatusUpdate('Verbinde…');
 
     try {
@@ -27,11 +28,16 @@ class ConductorSocket {
       _channel = IOWebSocketChannel(socket);
       onStatusUpdate('Verbunden');
 
-      // Registrierung beim Server
+      // Registrierung beim Server. Der Server erwartet `role` und `app`
+      // (siehe noten-server bin/server.dart, _handleWebSocketMessage
+      // case 'register'). Nur mit gesetztem `app` schickt der Server beim
+      // Verbinden sofort den Wartungsstatus *und* das aktuell hinterlegte
+      // Release für diese App mit.
       _channel!.sink.add(jsonEncode({
         'type': 'register',
         'clientId': clientId,
         'role': 'conductor',
+        'app': AppConfig.appId,
       }));
 
       _channel!.stream.listen(
@@ -43,6 +49,8 @@ class ConductorSocket {
             switch (type) {
               case 'status':
               case 'release_announce':
+              case 'maintenance_status':
+              case 'admin_message':
               case 'send_piece_signal':
               case 'end_piece_signal':
               case 'ping':

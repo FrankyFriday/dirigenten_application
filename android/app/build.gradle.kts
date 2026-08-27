@@ -1,18 +1,7 @@
-import java.util.Properties
-import java.io.FileInputStream
-
 plugins {
     id("com.android.application")
     id("kotlin-android")
     id("dev.flutter.flutter-gradle-plugin")
-}
-
-val keystoreProperties = Properties()
-val keystorePropertiesFile = rootProject.file("app/key.properties")
-if (keystorePropertiesFile.exists()) {
-    keystoreProperties.load(FileInputStream(keystorePropertiesFile))
-} else {
-    throw GradleException("Keystore properties file not found: $keystorePropertiesFile")
 }
 
 android {
@@ -37,27 +26,14 @@ android {
         jvmTarget = "17"
     }
 
-    signingConfigs {
-        create("release") {
-            // zwingend File + Properties
-            val storeFilePath = keystoreProperties.getProperty("storeFile")
-                ?: throw GradleException("storeFile not found in key.properties")
-            storeFile = file(storeFilePath)
-
-            storePassword = keystoreProperties.getProperty("storePassword")
-                ?: throw GradleException("storePassword not found in key.properties")
-
-            keyAlias = keystoreProperties.getProperty("keyAlias")
-                ?: throw GradleException("keyAlias not found in key.properties")
-
-            keyPassword = keystoreProperties.getProperty("keyPassword")
-                ?: throw GradleException("keyPassword not found in key.properties")
-        }
-    }
-
     buildTypes {
         getByName("release") {
-            signingConfig = signingConfigs.getByName("release")
+            // Kein eigener Signing-Key: Release-Builds werden mit dem
+            // Standard-Debug-Key signiert. Das reicht für interne
+            // Verteilung per Nextcloud/APK-Direktinstallation. Wird
+            // später ein eigener Play-Store-fähiger Key gebraucht, kann
+            // hier wieder eine signingConfig mit key.properties ergänzt
+            // werden.
             isMinifyEnabled = false
             isShrinkResources = false
         }
