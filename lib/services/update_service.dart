@@ -1,51 +1,20 @@
 import 'dart:async';
-import 'package:package_info_plus/package_info_plus.dart';
 import '../models/update_info.dart';
-import '../repositories/update_repository.dart';
-import '../services/version_checker.dart';
 import '../services/download_service.dart';
 import '../utils/logger.dart';
 
-/// Main service for handling app updates.
-/// Coordinates version checking, downloading, and installation.
+/// Kümmert sich ums Herunterladen eines per WebSocket angekündigten
+/// Releases. Der "Check ob es ein Update gibt" passiert nicht hier,
+/// sondern live über die `release_announce`-Nachricht des Noten-Servers
+/// (siehe ConductorPage._handleReleaseAnnounce) – ein eigenes Pull-System
+/// gegen eine update.json gibt es beim noten-server v2 nicht.
 class UpdateService {
-  final UpdateRepository _repository;
   final DownloadService _downloadService;
 
-  UpdateService(this._repository, this._downloadService);
+  UpdateService(this._downloadService);
 
-  /// Checks for available updates.
-  /// Returns UpdateInfo if a newer version is available, null otherwise.
-  Future<UpdateInfo?> checkForUpdate() async {
-    try {
-      UpdateLogger.info('Checking for updates...');
-
-      final updateInfo = await _repository.fetchUpdateInfo();
-      if (updateInfo == null) {
-        UpdateLogger.info('No update info available');
-        return null;
-      }
-
-      final packageInfo = await PackageInfo.fromPlatform();
-      final currentVersion = packageInfo.version;
-
-      UpdateLogger.info('Current version: $currentVersion, Latest version: ${updateInfo.version}');
-
-      if (VersionChecker.isNewerVersion(currentVersion, updateInfo.version)) {
-        UpdateLogger.info('New version available');
-        return updateInfo;
-      } else {
-        UpdateLogger.info('App is up to date');
-        return null;
-      }
-    } catch (e) {
-      UpdateLogger.error('Error checking for updates', e);
-      return null;
-    }
-  }
-
-  /// Downloads the update file and returns the file path.
-  /// Provides progress updates via the stream controller.
+  /// Lädt die APK für [updateInfo] herunter und liefert den lokalen
+  /// Dateipfad zurück (oder null bei Fehler).
   Future<String?> downloadUpdate(
     UpdateInfo updateInfo,
     StreamController<double> progressController,
