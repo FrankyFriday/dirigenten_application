@@ -164,10 +164,15 @@ jobs:
             --environment "Production"
 
       # ================= NOTIFY SERVER =================
-      - name: Notify Noten Server (WebSocket)
+      - name: Notify Noten Server (Release API)
+        env:
+          NOTEN_SERVER_API_KEY: ${{ secrets.NOTEN_SERVER_API_KEY }}
         run: |
-          WEBSOCAT_VERSION="v1.13.0"
-          wget -O websocat "https://github.com/vi/websocat/releases/download/${WEBSOCAT_VERSION}/websocat.x86_64-unknown-linux-musl"
-          chmod +x websocat
-          ./websocat -n1 wss://ws.notenserver.duckdns.org <<< \
-            '{"type":"release_announce","app":"dirigenten_application","version":"${{ steps.next_release.outputs.next_release }}","apkUrl":"https://cloud.notenserver.duckdns.org/remote.php/dav/files/mwesterh/releases/dirigenten_application-${{ steps.next_release.outputs.next_release }}.apk"}'
+          curl -sf -X POST "https://ws.notenserver.duckdns.org/api/releases" \
+            -H "X-Api-Key: ${NOTEN_SERVER_API_KEY}" \
+            -H "Content-Type: application/json" \
+            -d '{
+                  "app": "dirigenten_app",
+                  "version": "${{ steps.next_release.outputs.next_release }}",
+                  "apkUrl": "https://cloud.notenserver.duckdns.org/remote.php/dav/files/mwesterh/releases/dirigenten_application-${{ steps.next_release.outputs.next_release }}.apk"
+                }'
