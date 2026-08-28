@@ -1,6 +1,9 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
+
 import 'package:dio/dio.dart';
+
 import '../utils/logger.dart';
 import '../utils/platform_utils.dart';
 
@@ -29,9 +32,22 @@ class DownloadService {
         await dir.create(recursive: true);
       }
 
+      // TEMPORARY TEST CREDENTIALS
+      const username = 'mwesterh';
+      const password = 'Franky-posaune03';
+
+      final credentials = base64Encode(
+        utf8.encode('$username:$password'),
+      );
+
       await _dio.download(
         url,
         filePath,
+        options: Options(
+          headers: {
+            'Authorization': 'Basic $credentials',
+          },
+        ),
         onReceiveProgress: (received, total) {
           if (total != -1) {
             final progress = received / total;
