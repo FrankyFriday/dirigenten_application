@@ -1,3 +1,4 @@
+
 name: Android Release
 
 on:
@@ -31,7 +32,6 @@ jobs:
           key: ${{ runner.os }}-flutter-${{ hashFiles('**/pubspec.yaml') }}
           restore-keys: |
             ${{ runner.os }}-flutter-
-
       - name: Install dependencies
         run: flutter pub get
 
@@ -43,7 +43,6 @@ jobs:
           mkdir -p android/app
           echo "$KEYSTORE_BASE64" | base64 --decode > android/app/dirigenten_key.jks
           ls -l android/app
-
       # ================= KEY.PROPERTIES =================
       - name: Create key.properties
         run: |
@@ -53,14 +52,12 @@ jobs:
           keyAlias=${{ secrets.KEY_ALIAS }}
           storeFile=dirigenten_key.jks
           EOF
-
       # ================= VERIFY KEYSTORE =================
       - name: Verify keystore alias
         run: |
           keytool -list \
             -keystore android/app/dirigenten_key.jks \
             -storepass "${{ secrets.KEYSTORE_PASSWORD }}"
-
       # ================= GET NEXT RELEASE NUMBER =================
       - name: Determine next release number
         id: next_release
@@ -71,9 +68,7 @@ jobs:
           FILES_XML=$(curl -s -u "${NC_USER}:${NC_PASS}" \
             -X PROPFIND \
             "https://cloud.notenserver.duckdns.org/remote.php/dav/files/mwesterh/releases/")
-
           VERSIONS=$(echo "$FILES_XML" | grep -oP 'dirigenten_application-\K(\d+\.\d+\.\d+)(?=\.apk)')
-
           if [ -z "$VERSIONS" ]; then
             NEXT="0.0.1"
           else
@@ -84,10 +79,8 @@ jobs:
             PATCH=$((PATCH+1))
             NEXT="$MAJOR.$MINOR.$PATCH"
           fi
-
           echo "next_release=$NEXT" >> $GITHUB_OUTPUT
           echo "Next release version: $NEXT"
-
       # ================= CREATE .ENV =================
       # WICHTIG: Nur Werte hier rein, die im APK landen DÜRFEN.
       # NC_USER/NC_PASS wurden entfernt - die landen sonst im Klartext im
@@ -99,7 +92,6 @@ jobs:
           cat <<EOF > .env
           API_URL=${{ secrets.API_URL }}
           EOF
-
       # ================= BUILD =================
       - name: Build APK (release)
         run: |
@@ -108,34 +100,34 @@ jobs:
             --build-name=${{ steps.next_release.outputs.next_release }} \
             --build-number=$(date +%s) \
             --no-tree-shake-icons
-
       # ================= RENAME APK =================
       - name: Rename APK
         run: |
           mv build/app/outputs/flutter-apk/app-release.apk \
             dirigenten_application-${{ steps.next_release.outputs.next_release }}.apk
-
+      # ================= NEXTCLOUD =================
+      - name: Ensure releases folder exists
+        env:
+          NC_USER: ${{ secrets.NC_USER }}
+          NC_PASS: ${{ secrets.NC_PASS }}
+        run: |
+          curl -u "${NC_USER}:${NC_PASS}" \
+            -X MKCOL \
+            "https://cloud.notenserver.duckdns.org/remote.php/dav/files/mwesterh/releases" \
+            || true
+      - name: Upload APK to Nextcloud
+        env:
+          NC_USER: ${{ secrets.NC_USER }}
+          NC_PASS: ${{ secrets.NC_PASS }}
+        run: |
+          curl -u "${NC_USER}:${NC_PASS}" \
+            -T dirigenten_application-${{ steps.next_release.outputs.next_release }}.apk \
+            "https://cloud.notenserver.duckdns.org/remote.php/dav/files/mwesterh/releases/dirigenten_application-${{ steps.next_release.outputs.next_release }}.apk"
       # ================= OCTOPUS DEPLOY =================
       - name: Install Octopus CLI
         uses: OctopusDeploy/install-octopus-cli-action@v3
         with:
           version: latest
-          
-      - name: Zip APK for Octopus
-        run: |
-          cd build/app/outputs/flutter-apk
-          zip "dirigenten_application-${{ steps.next_release.outputs.next_release }}.zip" app-release.apk
-          mv "dirigenten_application-${{ steps.next_release.outputs.next_release }}.zip" $GITHUB_WORKSPACE/
-
-      - name: Push package to Octopus
-        env:
-          OCTOPUS_URL: https://franky.octopus.app
-          OCTOPUS_API_KEY: ${{ secrets.OCTOPUS_API_KEY }}
-          OCTOPUS_SPACE: ${{ secrets.OCTOPUS_SPACE }}
-        run: |
-          octopus package push \
-            --package dirigenten_application-${{ steps.next_release.outputs.next_release }}.zip \
-            --overwrite-mode OverwriteExisting
 
       - name: Create Octopus Release
         env:
@@ -146,8 +138,8 @@ jobs:
           octopus release create \
             --project "dirigenten_application" \
             --version "${{ steps.next_release.outputs.next_release }}" \
-            --package "dirigenten_application:${{ steps.next_release.outputs.next_release }}" \
-            --release-notes "APK Release"
+            --release-notes "APK Release" \
+            --variable "ApkUrl:https://cloud.notenserver.duckdns.org/remote.php/dav/files/mwesterh/releases/dirigenten_application-${{ steps.next_release.outputs.next_release }}.apk"
 
       - name: Deploy Release to Octopus
         env:
