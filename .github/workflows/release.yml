@@ -120,6 +120,12 @@ jobs:
         uses: OctopusDeploy/install-octopus-cli-action@v3
         with:
           version: latest
+          
+      - name: Zip APK for Octopus
+        run: |
+          cd build/app/outputs/flutter-apk
+          zip "dirigenten_application-${{ steps.next_release.outputs.next_release }}.zip" app-release.apk
+          mv "dirigenten_application-${{ steps.next_release.outputs.next_release }}.zip" $GITHUB_WORKSPACE/
 
       - name: Push package to Octopus
         env:
@@ -128,7 +134,7 @@ jobs:
           OCTOPUS_SPACE: ${{ secrets.OCTOPUS_SPACE }}
         run: |
           octopus package push \
-            --package dirigenten_application-${{ steps.next_release.outputs.next_release }}.apk \
+            --package dirigenten_application-${{ steps.next_release.outputs.next_release }}.zip \
             --overwrite-mode OverwriteExisting
 
       - name: Create Octopus Release
