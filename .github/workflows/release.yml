@@ -139,7 +139,7 @@ jobs:
             --project "dirigenten_application" \
             --version "${{ steps.next_release.outputs.next_release }}" \
             --release-notes "APK Release" \
-            --variable "ApkUrl:https://cloud.notenserver.duckdns.org/remote.php/dav/files/mwesterh/releases/dirigenten_application-${{ steps.next_release.outputs.next_release }}.apk"
+            --variable "ApkUrl=https://cloud.notenserver.duckdns.org/remote.php/dav/files/mwesterh/releases/dirigenten_application-${{ steps.next_release.outputs.next_release }}.apk"
 
       - name: Deploy Release to Octopus
         env:
