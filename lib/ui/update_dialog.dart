@@ -76,6 +76,7 @@ class UpdateDialog extends ConsumerWidget {
 
       if (filePath != null) {
         UpdateLogger.info('Download completed: $filePath');
+        if (!context.mounted) return;
         // Open the installer
         await _openInstaller(context, filePath);
         // Close dialog and potentially restart app
@@ -106,7 +107,9 @@ class UpdateDialog extends ConsumerWidget {
         UpdateLogger.warning('Failed to open installer: ${result.message}');
         if (context.mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Installer konnte nicht geöffnet werden: ${result.message}')),
+            SnackBar(
+                content: Text(
+                    'Installer konnte nicht geöffnet werden: ${result.message}')),
           );
         }
       } else {

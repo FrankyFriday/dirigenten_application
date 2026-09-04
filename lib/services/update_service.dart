@@ -199,6 +199,21 @@ class UpdateService {
         '✅ PACKAGE NAME OK',
       );
 
+      // Die APK muss exakt die Version tragen, die der Server angekündigt hat.
+      if (apkVersion != updateInfo.version) {
+        UpdateLogger.error(
+          '❌ VERSION FALSCH: erwartet ${updateInfo.version}, '
+          'APK enthält $apkVersion',
+        );
+
+        UpdateLogger.info('UPDATE DOWNLOAD FAILED');
+        UpdateLogger.info('========================================');
+
+        return null;
+      }
+
+      UpdateLogger.info('✅ APK VERSION OK');
+
       // ------------------------------------------------------------
       // SIGNATUR VERGLEICHEN
       // ------------------------------------------------------------

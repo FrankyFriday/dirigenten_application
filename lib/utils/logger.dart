@@ -1,3 +1,4 @@
+import 'dart:developer' as developer;
 import 'dart:io';
 import 'package:path_provider/path_provider.dart';
 
@@ -32,8 +33,7 @@ class UpdateLogger {
     final timestamp = DateTime.now().toIso8601String();
     final logMessage = '[$timestamp] [$level] $message';
 
-    // Always print to console
-    print(logMessage);
+    developer.log(logMessage, name: 'marschpad');
 
     // In release mode, also write to file (using kReleaseMode)
     if (const bool.fromEnvironment('dart.vm.product')) {
@@ -48,8 +48,11 @@ class UpdateLogger {
       final file = File('${directory.path}/$_logFileName');
       await file.writeAsString('$message\n', mode: FileMode.append);
     } catch (e) {
-      // Fallback to console if file writing fails
-      print('Failed to write log to file: $e');
+      developer.log(
+        'Failed to write log to file: $e',
+        name: 'marschpad',
+        level: 1000,
+      );
     }
   }
 
