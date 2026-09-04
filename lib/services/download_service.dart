@@ -151,10 +151,10 @@ class DownloadService {
       // ------------------------------------------------------------
 
       final username =
-          dotenv.env['NEXTCLOUD_USER']?.trim() ?? '';
+          dotenv.env['NC_USER']?.trim() ?? '';
 
       final password =
-          dotenv.env['NEXTCLOUD_PASSWORD'] ?? '';
+          dotenv.env['NC_PASS'] ?? '';
 
       if (username.isEmpty) {
         throw StateError(
