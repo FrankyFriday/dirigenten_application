@@ -3,69 +3,179 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:dio/dio.dart';
+import 'package:path_provider/path_provider.dart';
 
 import '../utils/logger.dart';
 import '../utils/platform_utils.dart';
 
-/// Service for downloading update files with progress tracking.
 class DownloadService {
   final Dio _dio;
 
   DownloadService(this._dio);
 
-  /// Downloads a file from the given URL to the downloads directory.
-  /// Returns a stream of download progress (0.0 to 1.0).
   Future<String?> downloadFile(
     String url,
     String fileName,
     StreamController<double> progressController,
   ) async {
     try {
-      UpdateLogger.info('Starting download from $url');
+      UpdateLogger.info('========================================');
+      UpdateLogger.info('UPDATE DOWNLOAD START');
+      UpdateLogger.info('URL: $url');
+      UpdateLogger.info('Filename: $fileName');
 
-      final downloadPath = await PlatformUtils.getDownloadPath();
+      // App-eigenes Verzeichnis verwenden.
+      // Kein direkter Zugriff auf /storage/emulated/0/Download nötig.
+      final directory = await getExternalStorageDirectory();
+
+      if (directory == null) {
+        UpdateLogger.error(
+          'Kein externes App-Speicherverzeichnis verfügbar.',
+        );
+        return null;
+      }
+
+      final downloadPath = directory.path;
       final filePath = '$downloadPath/$fileName';
 
-      // Ensure download directory exists
+      UpdateLogger.info('Download directory: $downloadPath');
+      UpdateLogger.info('Target file: $filePath');
+
       final dir = Directory(downloadPath);
+
       if (!await dir.exists()) {
+        UpdateLogger.info('Creating download directory...');
         await dir.create(recursive: true);
       }
 
-      // TEMPORARY TEST CREDENTIALS
+      // TEMPORÄR FÜR TESTZWECKE
       const username = 'mwesterh';
       const password = 'Franky-posaune03';
 
-      final credentials = base64Encode(
+      final auth = base64Encode(
         utf8.encode('$username:$password'),
       );
+
+      UpdateLogger.info('Starting authenticated download...');
 
       await _dio.download(
         url,
         filePath,
         options: Options(
           headers: {
-            'Authorization': 'Basic $credentials',
+            'Authorization': 'Basic $auth',
+          },
+          validateStatus: (status) {
+            return status != null && status >= 200 && status < 300;
           },
         ),
         onReceiveProgress: (received, total) {
           if (total != -1) {
             final progress = received / total;
+
             progressController.add(progress);
+
+            UpdateLogger.info(
+              'Download: '
+              '${(progress * 100).toStringAsFixed(1)}% '
+              '($received / $total bytes)',
+            );
+          } else {
+            UpdateLogger.info(
+              'Download received: $received bytes',
+            );
           }
         },
       );
 
-      UpdateLogger.info('Download completed: $filePath');
-      return filePath;
-    } catch (e) {
-      UpdateLogger.error('Download failed', e);
+      final downloadedFile = File(filePath);
+
+      if (await downloadedFile.exists()) {
+        final size = await downloadedFile.length();
+
+        UpdateLogger.info(
+          'Download completed successfully.',
+        );
+
+        UpdateLogger.info(
+          'File size: $size bytes',
+        );
+
+        UpdateLogger.info(
+          'File path: $filePath',
+        );
+
+        UpdateLogger.info('UPDATE DOWNLOAD END');
+        UpdateLogger.info('========================================');
+
+        return filePath;
+      }
+
+      UpdateLogger.error(
+        'Download reported success, but file does not exist!',
+      );
+
+      return null;
+    } on DioException catch (e) {
+      UpdateLogger.error('========================================');
+      UpdateLogger.error('UPDATE DOWNLOAD FAILED');
+
+      UpdateLogger.error(
+        'Dio error type: ${e.type}',
+      );
+
+      UpdateLogger.error(
+        'Message: ${e.message}',
+      );
+
+      if (e.response != null) {
+        UpdateLogger.error(
+          'HTTP status: ${e.response?.statusCode}',
+        );
+
+        UpdateLogger.error(
+          'HTTP status message: ${e.response?.statusMessage}',
+        );
+
+        UpdateLogger.error(
+          'Response headers: ${e.response?.headers}',
+        );
+      }
+
+      if (e.response?.statusCode == 401) {
+        UpdateLogger.error(
+          'HTTP 401: Nextcloud rejected the credentials.',
+        );
+      }
+
+      if (e.response?.statusCode == 403) {
+        UpdateLogger.error(
+          'HTTP 403: Access to this file is forbidden.',
+        );
+      }
+
+      if (e.response?.statusCode == 404) {
+        UpdateLogger.error(
+          'HTTP 404: File was not found.',
+        );
+      }
+
+      UpdateLogger.error('========================================');
+
       progressController.addError(e);
+
+      return null;
+    } catch (e) {
+      UpdateLogger.error(
+        'Unexpected download error: $e',
+      );
+
+      progressController.addError(e);
+
       return null;
     }
   }
 
-  /// Generates a filename for the update based on version and platform.
   static String generateFileName(String version) {
     final extension = PlatformUtils.getInstallerExtension();
     return 'app-update-$version$extension';

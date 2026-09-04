@@ -138,45 +138,90 @@ class _ConductorPageState extends ConsumerState<ConductorPage> {
   ///
   /// Der Server kennt keine `mandatory`/`notes`-Felder wie das ursprüngliche
   /// `update.json`-Format – dafür werden hier sinnvolle Defaults gesetzt.
-  Future<void> _handleReleaseAnnounce(Map<String, dynamic> msg) async {
-    if (msg['app'] != AppConfig.appId) return;
+Future<void> _handleReleaseAnnounce(Map<String, dynamic> msg) async {
+  print('[UPDATE] ========================================');
+  print('[UPDATE] release_announce empfangen');
+  print('[UPDATE] komplette Nachricht: $msg');
 
-    final release = msg['release'];
-    if (release is! Map) return;
-    final releaseMap = Map<String, dynamic>.from(release);
-
-    final serverVersion = releaseMap['version'] as String?;
-    final apkUrl = releaseMap['apkUrl'] as String?;
-    if (serverVersion == null || apkUrl == null) return;
-
-    final packageInfo = await PackageInfo.fromPlatform();
-    final currentVersion = packageInfo.version;
-
-    if (!VersionChecker.isNewerVersion(currentVersion, serverVersion)) {
-      print('[UPDATE] Keine neue Version. Aktuell: $currentVersion');
-      return;
-    }
-
-    if (_updateDialogShown || !mounted) return;
-    _updateDialogShown = true;
-
-    final updateInfo = UpdateInfo(
-      version: serverVersion,
-      mandatory: false,
-      notes: 'Neues Release verfügbar.',
-      url: apkUrl,
+  if (msg['app'] != AppConfig.appId) {
+    print(
+      '[UPDATE] Falsche App-ID: '
+      '${msg['app']} != ${AppConfig.appId}',
     );
-
-    await showDialog<bool>(
-      context: context,
-      barrierDismissible: true,
-      builder: (_) => Consumer(
-        builder: (context, ref, _) => UpdateDialog(updateInfo: updateInfo),
-      ),
-    );
-
-    _updateDialogShown = false;
+    return;
   }
+
+  final release = msg['release'];
+
+  if (release is! Map) {
+    print('[UPDATE] release fehlt oder ist kein Map');
+    return;
+  }
+
+  final releaseMap = Map<String, dynamic>.from(release);
+
+  final serverVersion = releaseMap['version'] as String?;
+  final apkUrl = releaseMap['apkUrl'] as String?;
+
+  print('[UPDATE] Server-Version: $serverVersion');
+  print('[UPDATE] APK-URL: $apkUrl');
+
+  if (serverVersion == null || apkUrl == null) {
+    print('[UPDATE] Version oder APK-URL fehlt');
+    return;
+  }
+
+  final packageInfo = await PackageInfo.fromPlatform();
+  final currentVersion = packageInfo.version;
+
+  print('[UPDATE] Installierte Version: $currentVersion');
+
+  final isNewer = VersionChecker.isNewerVersion(
+    currentVersion,
+    serverVersion,
+  );
+
+  print('[UPDATE] Ist Server-Version neuer? $isNewer');
+
+  if (!isNewer) {
+    print(
+      '[UPDATE] Kein Update erforderlich: '
+      '$currentVersion -> $serverVersion',
+    );
+    return;
+  }
+
+  if (_updateDialogShown || !mounted) {
+    print('[UPDATE] Update-Dialog bereits angezeigt oder Widget unmounted');
+    return;
+  }
+
+  _updateDialogShown = true;
+
+  print('[UPDATE] NEUES UPDATE ERKANNT');
+  print('[UPDATE] Öffne Update-Dialog...');
+
+  final updateInfo = UpdateInfo(
+    version: serverVersion,
+    mandatory: false,
+    notes: 'Neues Release verfügbar.',
+    url: apkUrl,
+  );
+
+  await showDialog<bool>(
+    context: context,
+    barrierDismissible: true,
+    builder: (_) => Consumer(
+      builder: (context, ref, _) {
+        return UpdateDialog(updateInfo: updateInfo);
+      },
+    ),
+  );
+
+  print('[UPDATE] Update-Dialog geschlossen');
+
+  _updateDialogShown = false;
+}
 
   void _sendPiece(PieceGroup group) {
     if (!_socket.isConnected) return;
