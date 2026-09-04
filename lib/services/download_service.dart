@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:dio/dio.dart';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:path_provider/path_provider.dart';
 
 import '../utils/logger.dart';
@@ -13,15 +14,61 @@ class DownloadService {
 
   DownloadService(this._dio);
 
+  Uri _resolveDownloadUri(String value) {
+    final raw = value.trim();
+    if (raw.isEmpty) {
+      throw FormatException('Leere Download-URL.');
+    }
+
+    final parsed = Uri.tryParse(raw);
+    if (parsed == null) {
+      throw FormatException('Ungültige Download-URL: $value');
+    }
+
+    if (parsed.hasScheme) {
+      if (!parsed.hasAuthority ||
+          (parsed.scheme != 'http' && parsed.scheme != 'https')) {
+        throw FormatException('Ungültige Download-URL: $value');
+      }
+      return parsed;
+    }
+
+    final baseValue = dotenv.env['NEXTCLOUD_BASE_URL']?.trim() ?? '';
+    final base = Uri.tryParse(baseValue);
+    if (base == null ||
+        !base.hasScheme ||
+        !base.hasAuthority ||
+        (base.scheme != 'http' && base.scheme != 'https')) {
+      throw StateError(
+        'Relative Download-URL erhalten, aber NEXTCLOUD_BASE_URL ist ungültig.',
+      );
+    }
+
+    final resolved = raw.startsWith('/')
+        ? base.replace(
+            path: parsed.path,
+            query: parsed.query,
+            fragment: parsed.fragment,
+          )
+        : base.resolve(raw);
+    if (!resolved.hasScheme || !resolved.hasAuthority) {
+      throw FormatException('Ungültige aufgelöste Download-URL: $value');
+    }
+    return resolved;
+  }
+
+  String _safeUri(Uri uri) => uri.replace(userInfo: '').toString();
+
   Future<String?> downloadFile(
     String url,
     String fileName,
     StreamController<double> progressController,
   ) async {
     try {
+      final downloadUri = _resolveDownloadUri(url);
       UpdateLogger.info('========================================');
       UpdateLogger.info('UPDATE DOWNLOAD START');
-      UpdateLogger.info('URL: $url');
+      UpdateLogger.info('Download-URL: ${_safeUri(downloadUri)}');
       UpdateLogger.info('Filename: $fileName');
 
       // App-eigenes Verzeichnis verwenden.
@@ -48,9 +95,11 @@ class DownloadService {
         await dir.create(recursive: true);
       }
 
-      // TEMPORÄR FÜR TESTZWECKE
-      const username = 'mwesterh';
-      const password = 'Franky-posaune03';
+      final username = dotenv.env['NEXTCLOUD_USER'] ?? '';
+      final password = dotenv.env['NEXTCLOUD_PASSWORD'] ?? '';
+      if (username.isEmpty || password.isEmpty) {
+        throw StateError('Nextcloud-Zugangsdaten fehlen.');
+      }
 
       final auth = base64Encode(
         utf8.encode('$username:$password'),
@@ -59,7 +108,7 @@ class DownloadService {
       UpdateLogger.info('Starting authenticated download...');
 
       await _dio.download(
-        url,
+        downloadUri.toString(),
         filePath,
         options: Options(
           headers: {

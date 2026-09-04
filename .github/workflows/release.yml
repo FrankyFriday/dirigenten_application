@@ -91,6 +91,9 @@ jobs:
         run: |
           cat <<EOF > .env
           API_URL=${{ secrets.API_URL }}
+          NEXTCLOUD_BASE_URL=https://cloud.notenserver.duckdns.org/remote.php/dav/files/mwesterh
+          NEXTCLOUD_USER=${{ secrets.NC_USER }}
+          NEXTCLOUD_PASSWORD=${{ secrets.NC_PASS }}
           EOF
       # ================= BUILD =================
       - name: Build APK (release)
@@ -100,6 +103,16 @@ jobs:
             --build-name=${{ steps.next_release.outputs.next_release }} \
             --build-number=$(date +%s) \
             --no-tree-shake-icons
+      # ================= VERIFY APP VERSION =================
+      - name: Verify APK version
+        env:
+          EXPECTED_VERSION: ${{ steps.next_release.outputs.next_release }}
+        run: |
+          APK_VERSION=$(aapt dump badging build/app/outputs/flutter-apk/app-release.apk \
+            | sed -n "s/.*versionName='\([^']*\)'.*/\1/p")
+          echo "APK version: $APK_VERSION"
+          echo "Expected version: $EXPECTED_VERSION"
+          test "$APK_VERSION" = "$EXPECTED_VERSION"
       # ================= RENAME APK =================
       - name: Rename APK
         run: |

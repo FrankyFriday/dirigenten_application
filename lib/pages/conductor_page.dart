@@ -9,7 +9,9 @@ import '../services/nextcloud_service.dart';
 import '../services/conductor_socket.dart';
 import '../services/ui_utils.dart';
 import '../services/version_checker.dart';
+import '../services/notification_service.dart';
 import '../ui/update_dialog.dart';
+import '../utils/logger.dart';
 import 'package:uuid/uuid.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 
@@ -31,7 +33,7 @@ class _ConductorPageState extends ConsumerState<ConductorPage> {
   PieceGroup? _currentPiece;
   String _status = 'Nicht verbunden';
   bool _loading = true;
-  String _searchQuery = '';
+  String? _piecesError;
 
   // Werden über die 'status'-Nachricht des Servers befüllt
   // ({"type":"status","musicians":N,"conductors":M}).
@@ -68,16 +70,23 @@ class _ConductorPageState extends ConsumerState<ConductorPage> {
   }
 
   Future<void> _loadPieces() async {
-    setState(() => _loading = true);
+    if (mounted) {
+      setState(() {
+        _loading = true;
+        _piecesError = null;
+      });
+    }
     try {
       _pieces = await _service.loadPieces();
       _filteredPieces = List.from(_pieces);
     } catch (e) {
       if (!mounted) return;
+      setState(() => _piecesError = e.toString());
       UIUtils.showSnackbar(context, 'Fehler beim Laden: $e');
     } finally {
-      if (!mounted) return;
-      setState(() => _loading = false);
+      if (mounted) {
+        setState(() => _loading = false);
+      }
     }
   }
 
@@ -122,11 +131,11 @@ class _ConductorPageState extends ConsumerState<ConductorPage> {
 
       case 'send_piece_signal':
       case 'end_piece_signal':
-        print('[WS] Server-Signal empfangen: $type');
+        UpdateLogger.info('[WS] Server-Signal empfangen: $type');
         break;
 
       default:
-        print('[WS] Unbekannter Typ: $type');
+        UpdateLogger.warning('[WS] Unbekannter Typ: $type');
     }
   }
 
@@ -138,90 +147,92 @@ class _ConductorPageState extends ConsumerState<ConductorPage> {
   ///
   /// Der Server kennt keine `mandatory`/`notes`-Felder wie das ursprüngliche
   /// `update.json`-Format – dafür werden hier sinnvolle Defaults gesetzt.
-Future<void> _handleReleaseAnnounce(Map<String, dynamic> msg) async {
-  print('[UPDATE] ========================================');
-  print('[UPDATE] release_announce empfangen');
-  print('[UPDATE] komplette Nachricht: $msg');
+  Future<void> _handleReleaseAnnounce(Map<String, dynamic> msg) async {
+    UpdateLogger.info('[UPDATE] release_announce empfangen');
 
-  if (msg['app'] != AppConfig.appId) {
-    print(
-      '[UPDATE] Falsche App-ID: '
-      '${msg['app']} != ${AppConfig.appId}',
+    if (msg['app'] != AppConfig.appId) {
+      UpdateLogger.warning(
+        '[UPDATE] Falsche App-ID: '
+        '${msg['app']} != ${AppConfig.appId}',
+      );
+      return;
+    }
+
+    final release = msg['release'];
+
+    if (release is! Map) {
+      UpdateLogger.warning('[UPDATE] release fehlt oder ist kein Map');
+      return;
+    }
+
+    final releaseMap = Map<String, dynamic>.from(release);
+
+    final serverVersion = releaseMap['version'] as String?;
+    final apkUrl = releaseMap['apkUrl'] as String?;
+
+    UpdateLogger.info('[UPDATE] Server-Version: $serverVersion');
+    UpdateLogger.info('[UPDATE] APK-URL: $apkUrl');
+
+    if (serverVersion == null || apkUrl == null) {
+      UpdateLogger.warning('[UPDATE] Version oder APK-URL fehlt');
+      return;
+    }
+
+    final packageInfo = await PackageInfo.fromPlatform();
+    final currentVersion = packageInfo.version;
+
+    UpdateLogger.info('[UPDATE] Installierte Version: $currentVersion');
+
+    final isNewer = VersionChecker.isNewerVersion(
+      currentVersion,
+      serverVersion,
     );
-    return;
-  }
 
-  final release = msg['release'];
+    UpdateLogger.info('[UPDATE] Ist Server-Version neuer? $isNewer');
 
-  if (release is! Map) {
-    print('[UPDATE] release fehlt oder ist kein Map');
-    return;
-  }
+    if (!isNewer) {
+      UpdateLogger.info(
+        '[UPDATE] Kein Update erforderlich: '
+        '$currentVersion -> $serverVersion',
+      );
+      return;
+    }
 
-  final releaseMap = Map<String, dynamic>.from(release);
+    if (_updateDialogShown || !mounted) {
+      UpdateLogger.info(
+          '[UPDATE] Update-Dialog bereits angezeigt oder Widget unmounted');
+      return;
+    }
 
-  final serverVersion = releaseMap['version'] as String?;
-  final apkUrl = releaseMap['apkUrl'] as String?;
+    await notificationService.showUpdateAvailable(serverVersion);
+    if (!mounted) return;
 
-  print('[UPDATE] Server-Version: $serverVersion');
-  print('[UPDATE] APK-URL: $apkUrl');
+    _updateDialogShown = true;
 
-  if (serverVersion == null || apkUrl == null) {
-    print('[UPDATE] Version oder APK-URL fehlt');
-    return;
-  }
+    UpdateLogger.info('[UPDATE] NEUES UPDATE ERKANNT');
+    UpdateLogger.info('[UPDATE] Öffne Update-Dialog...');
 
-  final packageInfo = await PackageInfo.fromPlatform();
-  final currentVersion = packageInfo.version;
-
-  print('[UPDATE] Installierte Version: $currentVersion');
-
-  final isNewer = VersionChecker.isNewerVersion(
-    currentVersion,
-    serverVersion,
-  );
-
-  print('[UPDATE] Ist Server-Version neuer? $isNewer');
-
-  if (!isNewer) {
-    print(
-      '[UPDATE] Kein Update erforderlich: '
-      '$currentVersion -> $serverVersion',
+    final updateInfo = UpdateInfo(
+      version: serverVersion,
+      mandatory: false,
+      notes: 'Neues Release verfügbar.',
+      url: apkUrl,
     );
-    return;
+
+    await showDialog<bool>(
+      context: context,
+      barrierDismissible: true,
+      builder: (_) => Consumer(
+        builder: (context, ref, _) {
+          return UpdateDialog(updateInfo: updateInfo);
+        },
+      ),
+    );
+
+    UpdateLogger.info('[UPDATE] Update-Dialog geschlossen');
+
+    _updateDialogShown = false;
   }
-
-  if (_updateDialogShown || !mounted) {
-    print('[UPDATE] Update-Dialog bereits angezeigt oder Widget unmounted');
-    return;
-  }
-
-  _updateDialogShown = true;
-
-  print('[UPDATE] NEUES UPDATE ERKANNT');
-  print('[UPDATE] Öffne Update-Dialog...');
-
-  final updateInfo = UpdateInfo(
-    version: serverVersion,
-    mandatory: false,
-    notes: 'Neues Release verfügbar.',
-    url: apkUrl,
-  );
-
-  await showDialog<bool>(
-    context: context,
-    barrierDismissible: true,
-    builder: (_) => Consumer(
-      builder: (context, ref, _) {
-        return UpdateDialog(updateInfo: updateInfo);
-      },
-    ),
-  );
-
-  print('[UPDATE] Update-Dialog geschlossen');
-
-  _updateDialogShown = false;
-}
 
   void _sendPiece(PieceGroup group) {
     if (!_socket.isConnected) return;
@@ -246,7 +257,6 @@ Future<void> _handleReleaseAnnounce(Map<String, dynamic> msg) async {
   }
 
   void _filterPieces(String query) {
-    _searchQuery = query;
     setState(() {
       if (query.isEmpty) {
         _filteredPieces = List.from(_pieces);
@@ -334,35 +344,68 @@ Future<void> _handleReleaseAnnounce(Map<String, dynamic> msg) async {
           Expanded(
             child: _loading
                 ? const Center(child: CircularProgressIndicator())
-                : _filteredPieces.isEmpty
-                    ? const Center(
-                        child: Text(
-                          'Keine Stücke gefunden',
-                          style: TextStyle(fontSize: 16, color: Colors.black54),
+                : _piecesError != null
+                    ? Center(
+                        child: Padding(
+                          padding: const EdgeInsets.all(24),
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              const Text(
+                                'Stücke konnten nicht geladen werden.',
+                                textAlign: TextAlign.center,
+                                style: TextStyle(
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                              const SizedBox(height: 8),
+                              Text(
+                                _piecesError!,
+                                textAlign: TextAlign.center,
+                                style: const TextStyle(color: Colors.black54),
+                              ),
+                              const SizedBox(height: 16),
+                              OutlinedButton.icon(
+                                onPressed: _loadPieces,
+                                icon: const Icon(Icons.refresh),
+                                label: const Text('Erneut versuchen'),
+                              ),
+                            ],
+                          ),
                         ),
                       )
-                    : Scrollbar(
-                        controller: _scrollController,
-                        thumbVisibility: true,
-                        child: ListView.builder(
-                          controller: _scrollController,
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 20, vertical: 10),
-                          itemCount: _filteredPieces.length,
-                          itemBuilder: (_, i) {
-                            final group = _filteredPieces[i];
-                            final isActive = _currentPiece == group;
-                            return _PieceCard(
-                              group: group,
-                              active: isActive,
-                              onSend: () {
-                                HapticFeedback.lightImpact(); // Vibration beim Senden
-                                _sendPiece(group);
+                    : _filteredPieces.isEmpty
+                        ? const Center(
+                            child: Text(
+                              'Keine Stücke gefunden',
+                              style: TextStyle(
+                                  fontSize: 16, color: Colors.black54),
+                            ),
+                          )
+                        : Scrollbar(
+                            controller: _scrollController,
+                            thumbVisibility: true,
+                            child: ListView.builder(
+                              controller: _scrollController,
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 20, vertical: 10),
+                              itemCount: _filteredPieces.length,
+                              itemBuilder: (_, i) {
+                                final group = _filteredPieces[i];
+                                final isActive = _currentPiece == group;
+                                return _PieceCard(
+                                  group: group,
+                                  active: isActive,
+                                  onSend: () {
+                                    HapticFeedback
+                                        .lightImpact(); // Vibration beim Senden
+                                    _sendPiece(group);
+                                  },
+                                );
                               },
-                            );
-                          },
-                        ),
-                      ),
+                            ),
+                          ),
           ),
         ],
       ),
@@ -494,9 +537,12 @@ class _PieceCardState extends State<_PieceCard> {
         color: widget.active ? activeColor : Colors.white,
         borderRadius: BorderRadius.circular(24),
         boxShadow: const [
-          BoxShadow(color: Colors.black12, blurRadius: 16, offset: Offset(0, 6)),
+          BoxShadow(
+              color: Colors.black12, blurRadius: 16, offset: Offset(0, 6)),
         ],
-        border: widget.active ? Border.all(color: Colors.deepPurple, width: 2) : null,
+        border: widget.active
+            ? Border.all(color: Colors.deepPurple, width: 2)
+            : null,
       ),
       child: Padding(
         padding: const EdgeInsets.all(22),

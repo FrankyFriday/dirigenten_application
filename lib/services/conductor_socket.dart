@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:web_socket_channel/io.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 import '../config/app_config.dart';
+import '../utils/logger.dart';
 
 typedef WSStatusCallback = void Function(String status);
 typedef WSMessageCallback = void Function(Map<String, dynamic> message);
@@ -57,11 +58,11 @@ class ConductorSocket {
                 onMessage(map); // Leite bekannte Typen weiter
                 break;
               default:
-                print('[WS] Unbekannter Typ: $type');
+                UpdateLogger.warning('[WS] Unbekannter Typ: $type');
             }
           } catch (e) {
-            print('[WS] JSON Parsing Fehler: $e');
-            print('Raw msg: $msg');
+            UpdateLogger.error('[WS] JSON Parsing Fehler', e);
+            UpdateLogger.warning('[WS] Raw message: $msg');
           }
         },
         onDone: () => onStatusUpdate('Getrennt'),
@@ -69,7 +70,7 @@ class ConductorSocket {
       );
     } catch (e) {
       onStatusUpdate('Fehler');
-      print('[WS] Fehler beim Verbinden: $e');
+      UpdateLogger.error('[WS] Fehler beim Verbinden', e);
     }
   }
 

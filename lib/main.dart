@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'pages/conductor_page.dart';
+import 'services/notification_service.dart';
 
 /// =========================
 /// APP ENTRY POINT
@@ -10,6 +11,7 @@ import 'pages/conductor_page.dart';
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await dotenv.load(fileName: ".env");
+  await notificationService.initialize();
 
   runApp(const ProviderScope(child: MyApp()));
 }
