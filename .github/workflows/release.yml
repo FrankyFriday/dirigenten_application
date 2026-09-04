@@ -134,12 +134,12 @@ jobs:
           OCTOPUS_URL: https://franky.octopus.app
           OCTOPUS_API_KEY: ${{ secrets.OCTOPUS_API_KEY }}
           OCTOPUS_SPACE: ${{ secrets.OCTOPUS_SPACE }}
+
         run: |
           octopus release create \
             --project "dirigenten_application" \
             --version "${{ steps.next_release.outputs.next_release }}" \
-            --release-notes "APK Release" \
-            --variable "ApkUrl=https://cloud.notenserver.duckdns.org/remote.php/dav/files/mwesterh/releases/dirigenten_application-${{ steps.next_release.outputs.next_release }}.apk"
+            --release-notes "APK Release"
 
       - name: Deploy Release to Octopus
         env:
