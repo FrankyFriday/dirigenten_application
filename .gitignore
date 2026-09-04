@@ -47,6 +47,14 @@ coverage/
 /android/app/release
 
 # =========================
+# Android Signing / Keystore
+# =========================
+android/app/key.properties
+*.jks
+*.keystore
+keystore_base64.txt
+
+# =========================
 # iOS
 # =========================
 ios/Pods/
@@ -67,18 +75,4 @@ app.*.map.json
 .env.*
 **/.env
 
-# =========================
-# Docker / Nextcloud
-# =========================
-docker-compose.override.yml
-docker-stack.yml
-data/
-db_data/
-nextcloud_data/
-nextcloud_db_data/
-volumes/
-
-# =========================
-# Logs
-# =========================
-*.log
+#
