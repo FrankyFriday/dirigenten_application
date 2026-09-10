@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:async';
 import 'package:web_socket_channel/io.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 import '../config/app_config.dart';
@@ -13,6 +14,9 @@ class ConductorSocket {
   final WSStatusCallback onStatusUpdate;
   final WSMessageCallback onMessage;
   WebSocketChannel? _channel;
+  bool _connecting = false;
+  bool _disposed = false;
+  Timer? _reconnectTimer;
 
   ConductorSocket({
     required this.clientId,
@@ -21,11 +25,19 @@ class ConductorSocket {
   });
 
   Future<void> connect() async {
+    if (_disposed || _connecting || isConnected) return;
+
+    _connecting = true;
     const domain = AppConfig.wsDomain;
     onStatusUpdate('Verbinde…');
 
     try {
       final socket = await WebSocket.connect('wss://$domain');
+      if (_disposed) {
+        await socket.close();
+        return;
+      }
+
       _channel = IOWebSocketChannel(socket);
       onStatusUpdate('Verbunden');
 
@@ -65,12 +77,15 @@ class ConductorSocket {
             UpdateLogger.warning('[WS] Raw message: $msg');
           }
         },
-        onDone: () => onStatusUpdate('Getrennt'),
-        onError: (err) => onStatusUpdate('Fehler'),
+        onDone: _handleConnectionLost,
+        onError: (err) => _handleConnectionLost(),
       );
     } catch (e) {
       onStatusUpdate('Fehler');
       UpdateLogger.error('[WS] Fehler beim Verbinden', e);
+      _scheduleReconnect();
+    } finally {
+      _connecting = false;
     }
   }
 
@@ -79,8 +94,35 @@ class ConductorSocket {
   }
 
   void disconnect() {
+    _disposed = true;
+    _reconnectTimer?.cancel();
+    _reconnectTimer = null;
     _channel?.sink.close();
     _channel = null;
+  }
+
+  void reconnect() {
+    if (_disposed) return;
+    _reconnectTimer?.cancel();
+    _reconnectTimer = null;
+    _channel?.sink.close();
+    _channel = null;
+    connect();
+  }
+
+  void _handleConnectionLost() {
+    _channel = null;
+    if (_disposed) return;
+    onStatusUpdate('Getrennt');
+    _scheduleReconnect();
+  }
+
+  void _scheduleReconnect() {
+    if (_disposed || _reconnectTimer != null) return;
+    _reconnectTimer = Timer(const Duration(seconds: 3), () {
+      _reconnectTimer = null;
+      connect();
+    });
   }
 
   bool get isConnected => _channel != null;

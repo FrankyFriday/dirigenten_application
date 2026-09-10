@@ -22,7 +22,8 @@ class ConductorPage extends ConsumerStatefulWidget {
   ConsumerState<ConductorPage> createState() => _ConductorPageState();
 }
 
-class _ConductorPageState extends ConsumerState<ConductorPage> {
+class _ConductorPageState extends ConsumerState<ConductorPage>
+  with WidgetsBindingObserver {
   final NextcloudService _service = NextcloudService();
   late final ConductorSocket _socket;
   late final String _clientId;
@@ -48,6 +49,7 @@ class _ConductorPageState extends ConsumerState<ConductorPage> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _scrollController = ScrollController();
     _clientId = const Uuid().v4();
     _socket = ConductorSocket(
@@ -67,6 +69,16 @@ class _ConductorPageState extends ConsumerState<ConductorPage> {
     // vom Client initiiertes 'ping' würde vom Server nicht als Heartbeat
     // erkannt, sondern (mangels eigener Behandlung) an alle verbundenen
     // Clients weitergebroadcastet.
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      // Android kann TCP-Verbindungen während des Hintergrundbetriebs
+      // unterbrechen. Beim Zurückkehren wird die Verbindung geprüft und bei
+      // Bedarf mit erneuter Registrierung wiederhergestellt.
+      _socket.reconnect();
+    }
   }
 
   Future<void> _loadPieces() async {
@@ -271,6 +283,7 @@ class _ConductorPageState extends ConsumerState<ConductorPage> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _socket.disconnect();
     _scrollController.dispose();
     super.dispose();
