@@ -1,113 +1,76 @@
-# 🎼 Marschpad – Dirigenten Application
+# Marschpad – Dirigenten-App
 
-Die Marschpad Dirigenten Application ist eine Flutter-basierte Steuerungs-App für Dirigenten von Musikvereinen, Orchestern und Spielmannszügen.
-Sie ermöglicht die zentrale Kontrolle von Notenstücken und die Echtzeit-Steuerung aller verbundenen Musiker-Apps.
+Die Dirigenten-App ist das Steuerpult für den Musikverein Scharrel. Sie zeigt
+die verfügbaren Notenstücke an und sendet Start- und Stoppsignale an die
+verbundenen Musikergeräte. Die Oberfläche ist für den Einsatz während der
+Probe ausgelegt und unterstützt helle und dunkle Darstellung.
 
-Die Anwendung ist Teil des Marschpad-Gesamtsystems und arbeitet nahtlos mit der Musiker-App, einem WebSocket-Server sowie einer Nextcloud-Instanz zusammen.
-PDF-Dateien werden niemals über den Server übertragen, sondern ausschließlich direkt aus Nextcloud geladen, um Performance, Stabilität und Sicherheit zu gewährleisten.
+## Funktionen
 
-## ✨ FUNKTIONEN
+- Echtzeitverbindung zum Notenserver mit automatischer Wiederverbindung
+- Anzeige des Verbindungs- und Wartungsstatus sowie verbundener Geräte
+- Suche und Filterung der verfügbaren Stücke
+- Starten und synchrones Beenden eines Stücks auf den Musikergeräten
+- Empfang von Servermeldungen und App-Release-Hinweisen
+- Update-Download mit Prüfung von Paketname, Version und Android-Signatur
 
-Anzeige aller verfügbaren Notenstücke aus Nextcloud
+## Zusammenspiel der Apps
 
-Automatische Gruppierung nach Werk, Instrument und Stimme
+Die Apps verwenden `wss://ws.notenserver.duckdns.org` für die WebSocket-
+Steuerung. Beim Verbinden registriert sich die Dirigenten-App mit der Kennung
+`dirigenten_application`; der Server verwendet dafür auch die kanonische
+Kennung `dirigenten_app`.
 
-Starten eines Stücks per Knopfdruck
+Die Stückliste kommt über `GET /api/notes` vom Notenserver. Die Dirigenten-App
+lädt keine PDFs und überträgt keine Notendateien über WebSocket. Für ein Stück
+sendet sie ein Steuersignal. Die Musiker-App lädt anschließend die passenden
+PDFs über den Notenserver-Proxy. Die Dateinamen müssen dem Schema
+`Stück_Instrument_Stimme.pdf` entsprechen, zum Beispiel
+`Marsch_Trompete_1.pdf`.
 
-Beenden eines Stücks mit sofortigem Schließen bei allen Musikern
+Der Notenserver-Proxy ist derzeit nicht durch eine Anmeldung der Apps
+geschützt. Wer den Server erreichen kann, kann daher die dort bereitgestellte
+Notenliste und PDFs abrufen. Nextcloud-Zugangsdaten gehören ausschließlich in
+die Server- bzw. CI-Konfiguration und niemals in die App.
 
-Echtzeit-Statusanzeige (verbundene Musiker und Dirigenten)
+## Entwickeln und prüfen
 
-Keine PDF-Übertragung über WebSocket
+Voraussetzungen: Flutter/Dart gemäß `pubspec.yaml` sowie ein Android-SDK für
+Android-Builds.
 
-Extrem geringe Netzlast durch reine JSON-Steuersignale
-
-## 🧩 SYSTEMARCHITEKTUR
-
-Die Dirigenten-App kommuniziert ausschließlich per WebSocket mit dem Server.
-Es werden nur Steuerbefehle übertragen – keine PDFs, keine Binärdaten, keine Noten.
-
-Ablauf
-
-Dirigent wählt ein Stück aus
-
-Dirigent sendet ein send_piece_signal
-
-Musiker-Apps laden automatisch ihre passenden PDFs direkt aus Nextcloud
-
-Dirigent beendet das Stück
-
-Musiker-Apps schließen das PDF sofort und synchron
-
-Diese Architektur sorgt für maximale Skalierbarkeit, minimale Latenz und saubere Trennung der Verantwortlichkeiten.
-
-## ☁️ NEXTCLOUD-INTEGRATION
-
-Die Dirigenten-App liest ausschließlich Dateinamen aus Nextcloud, um verfügbare Stücke anzuzeigen.
-Ein Download von PDFs findet nicht statt.
-
-Der Zugriff erfolgt über WebDAV mit Zugangsdaten aus einer .env-Datei.
-
-## 📁 DATEINAMEN-KONVENTION
-
-Alle PDF-Dateien müssen nach folgendem Schema benannt sein:
-
-Stück_Instrument_Stimme.pdf
-
-Nur bei Einhaltung dieser Konvention können die Musiker-Apps automatisch die korrekten Noten finden und laden.
-
-## 🛠 TECHNIK
-
-Flutter
-
-Dart
-
-WebSocket (JSON-Steuerdaten)
-
-Nextcloud WebDAV
-
-Material Design
-
-## ▶️ START DER APP
-
-Abhängigkeiten installieren:
-
+```powershell
 flutter pub get
-
-
-App starten:
-
+flutter analyze --no-pub lib
+flutter test --no-pub
 flutter run
+```
 
-## ⚠️ WICHTIGE HINWEISE
+Die Serveradresse und App-Kennung sind in `lib/config/app_config.dart`
+hinterlegt. Änderungen an der Serveradresse müssen mit dem Notenserver und
+der Musiker-App abgestimmt werden.
 
-Die Dirigenten-App lädt keine PDFs
+## Android-Release
 
-Sie dient ausschließlich der Steuerung
+Der Workflow **Android Release** in GitHub Actions baut ein signiertes APK,
+prüft Version und Signatur, lädt das APK zu Nextcloud hoch und erstellt einen
+Octopus-Release für `dirigenten_application`. Er kann über einen Tag `vX.Y.Z`
+oder manuell mit einer Version im Format `X.Y.Z` gestartet werden.
 
-Musiker-Apps sind verantwortlich für Download, Caching und Anzeige
+Im GitHub-Repository müssen die Actions-Secrets `KEYSTORE_BASE64`,
+`KEYSTORE_PASSWORD`, `KEY_PASSWORD`, `KEY_ALIAS`, `NC_USER`, `NC_PASS`,
+`OCTOPUS_API_KEY` und `OCTOPUS_SPACE` vorhanden sein. Der Workflow dekodiert
+den Keystore temporär, prüft ihn mit `keytool` und erzeugt daraus die
+Signierungskonfiguration. Keystore und Passwörter dürfen weder eingecheckt
+noch in Logs ausgegeben werden.
 
-Der WebSocket-Server muss erreichbar sein
+## Projektstruktur
 
-Die Nextcloud-Instanz muss korrekt konfiguriert sein
+- `lib/pages/conductor_page.dart` – Dirigentenpult und WebSocket-Steuerung
+- `lib/services/` – Notenserver, WebSocket, Updates und Benachrichtigungen
+- `lib/theme/app_theme.dart` – gemeinsames helles und dunkles Designsystem
+- `android/` – Android-App und Release-Signierung
+- `.github/workflows/` – Android-Release und gezielte Octopus-Reparatur
 
-## 🔐 SICHERHEIT
+## Lizenz
 
-WebSocket-Verbindungen ausschließlich über WSS
-
-Nextcloud-Zugriff über Basic Authentication
-
-Keine sensiblen Zugangsdaten im Quellcode
-
-Konfigurationsdaten ausschließlich über .env
-
-## 📜 LIZENZ
-
-Interne Nutzung – Musikverein Scharrel
-Alle Rechte vorbehalten.
-
-## 🎺 ENTWICKELT FÜR DIE PRAXIS
-
-Weniger Papier.
-Mehr Übersicht.
-Mehr Musik.
+Interne Nutzung – Musikverein Scharrel. Alle Rechte vorbehalten.

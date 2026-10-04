@@ -12,6 +12,7 @@ import '../services/version_checker.dart';
 import '../services/notification_service.dart';
 import '../ui/update_dialog.dart';
 import '../utils/logger.dart';
+import '../theme/app_theme.dart';
 import 'package:uuid/uuid.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 
@@ -23,11 +24,12 @@ class ConductorPage extends ConsumerStatefulWidget {
 }
 
 class _ConductorPageState extends ConsumerState<ConductorPage>
-  with WidgetsBindingObserver {
+    with WidgetsBindingObserver {
   final NextcloudService _service = NextcloudService();
   late final ConductorSocket _socket;
   late final String _clientId;
   late final ScrollController _scrollController;
+  final TextEditingController _searchController = TextEditingController();
 
   List<PieceGroup> _pieces = [];
   List<PieceGroup> _filteredPieces = [];
@@ -286,141 +288,138 @@ class _ConductorPageState extends ConsumerState<ConductorPage>
     WidgetsBinding.instance.removeObserver(this);
     _socket.disconnect();
     _scrollController.dispose();
+    _searchController.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
     return Scaffold(
-      backgroundColor: const Color(0xFFF0F1F6),
       appBar: AppBar(
-        elevation: 0,
-        backgroundColor: Colors.deepPurple,
-        foregroundColor: Colors.white,
-        title: const Text(
-          'Dirigentenpult',
-          style: TextStyle(fontWeight: FontWeight.w600),
+        title: const Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Marschpad'),
+            Text(
+              'DIRIGENTENPULT',
+              style: TextStyle(
+                fontSize: 10,
+                letterSpacing: 1.8,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+          ],
         ),
-        centerTitle: true,
+        actions: [
+          IconButton(
+            tooltip: 'Stücke aktualisieren',
+            onPressed: _loadPieces,
+            icon: const Icon(Icons.refresh_rounded),
+          ),
+          const SizedBox(width: 6),
+        ],
       ),
-      body: Column(
-        children: [
-          _StatusHeader(
-            status: _status,
-            musicians: _musicians,
-            conductors: _conductors,
-            maintenanceMode: _maintenanceMode,
-            onConnect: _socket.isConnected ? null : _socket.connect,
-          ),
-          if (_currentPiece != null)
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
-              child: ElevatedButton.icon(
-                onPressed: () {
-                  HapticFeedback.heavyImpact(); // Vibration beim Beenden
-                  _endPiece();
-                },
-                icon: const Icon(Icons.stop),
-                label: const Text(
-                  'Stück beenden',
-                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-                ),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.redAccent.shade400,
-                  minimumSize: const Size.fromHeight(54),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(24),
+      body: SafeArea(
+        top: false,
+        child: Column(
+          children: [
+            _StatusHeader(
+              status: _status,
+              musicians: _musicians,
+              conductors: _conductors,
+              maintenanceMode: _maintenanceMode,
+              onConnect: _socket.isConnected ? null : _socket.connect,
+            ),
+            if (_currentPiece != null)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(18, 0, 18, 12),
+                child: FilledButton.icon(
+                  onPressed: () {
+                    HapticFeedback.heavyImpact();
+                    _endPiece();
+                  },
+                  style: FilledButton.styleFrom(
+                    backgroundColor: colors.error,
+                    foregroundColor: colors.onError,
+                    minimumSize: const Size(double.infinity, 52),
                   ),
-                  elevation: 8,
-                  shadowColor: Colors.redAccent.shade100,
+                  icon: const Icon(Icons.stop_circle_outlined),
+                  label: Text('„${_currentPiece!.name}“ beenden'),
+                ),
+              ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(18, 0, 18, 14),
+              child: TextField(
+                controller: _searchController,
+                onChanged: _filterPieces,
+                decoration: InputDecoration(
+                  hintText: 'Stücke durchsuchen',
+                  prefixIcon: const Icon(Icons.search_rounded),
+                  suffixIcon: _filteredPieces.length != _pieces.length
+                      ? IconButton(
+                          tooltip: 'Suche löschen',
+                          onPressed: () {
+                            _searchController.clear();
+                            _filterPieces('');
+                          },
+                          icon: const Icon(Icons.close_rounded),
+                        )
+                      : null,
                 ),
               ),
             ),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 6),
-            child: TextField(
-              decoration: InputDecoration(
-                hintText: 'Suche nach Stückname...',
-                prefixIcon: const Icon(Icons.search, size: 22),
-                filled: true,
-                fillColor: Colors.white,
-                contentPadding:
-                    const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(24),
-                  borderSide: BorderSide.none,
-                ),
-              ),
-              onChanged: _filterPieces,
-            ),
-          ),
-          Expanded(
-            child: _loading
-                ? const Center(child: CircularProgressIndicator())
-                : _piecesError != null
-                    ? Center(
-                        child: Padding(
-                          padding: const EdgeInsets.all(24),
-                          child: Column(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              const Text(
-                                'Stücke konnten nicht geladen werden.',
-                                textAlign: TextAlign.center,
-                                style: TextStyle(
-                                  fontSize: 16,
-                                  fontWeight: FontWeight.w600,
+            Expanded(
+              child: _loading
+                  ? const Center(child: CircularProgressIndicator())
+                  : _piecesError != null
+                      ? _MessageState(
+                          icon: Icons.cloud_off_rounded,
+                          title: 'Stücke nicht verfügbar',
+                          message: _piecesError!,
+                          actionLabel: 'Erneut laden',
+                          onAction: _loadPieces,
+                        )
+                      : _filteredPieces.isEmpty
+                          ? _MessageState(
+                              icon: Icons.library_music_outlined,
+                              title: _pieces.isEmpty
+                                  ? 'Noch keine Stücke'
+                                  : 'Nichts gefunden',
+                              message: _pieces.isEmpty
+                                  ? 'Die Notenbibliothek ist momentan leer.'
+                                  : 'Passe den Suchbegriff an.',
+                              actionLabel:
+                                  _pieces.isEmpty ? 'Aktualisieren' : null,
+                              onAction: _pieces.isEmpty ? _loadPieces : null,
+                            )
+                          : RefreshIndicator(
+                              onRefresh: _loadPieces,
+                              child: Scrollbar(
+                                controller: _scrollController,
+                                thumbVisibility: true,
+                                child: ListView.builder(
+                                  controller: _scrollController,
+                                  padding:
+                                      const EdgeInsets.fromLTRB(18, 0, 18, 28),
+                                  itemCount: _filteredPieces.length,
+                                  itemBuilder: (_, index) {
+                                    final group = _filteredPieces[index];
+                                    return _PieceCard(
+                                      group: group,
+                                      active: _currentPiece == group,
+                                      onSend: () {
+                                        HapticFeedback.lightImpact();
+                                        _sendPiece(group);
+                                      },
+                                    );
+                                  },
                                 ),
                               ),
-                              const SizedBox(height: 8),
-                              Text(
-                                _piecesError!,
-                                textAlign: TextAlign.center,
-                                style: const TextStyle(color: Colors.black54),
-                              ),
-                              const SizedBox(height: 16),
-                              OutlinedButton.icon(
-                                onPressed: _loadPieces,
-                                icon: const Icon(Icons.refresh),
-                                label: const Text('Erneut versuchen'),
-                              ),
-                            ],
-                          ),
-                        ),
-                      )
-                    : _filteredPieces.isEmpty
-                        ? const Center(
-                            child: Text(
-                              'Keine Stücke gefunden',
-                              style: TextStyle(
-                                  fontSize: 16, color: Colors.black54),
                             ),
-                          )
-                        : Scrollbar(
-                            controller: _scrollController,
-                            thumbVisibility: true,
-                            child: ListView.builder(
-                              controller: _scrollController,
-                              padding: const EdgeInsets.symmetric(
-                                  horizontal: 20, vertical: 10),
-                              itemCount: _filteredPieces.length,
-                              itemBuilder: (_, i) {
-                                final group = _filteredPieces[i];
-                                final isActive = _currentPiece == group;
-                                return _PieceCard(
-                                  group: group,
-                                  active: isActive,
-                                  onSend: () {
-                                    HapticFeedback
-                                        .lightImpact(); // Vibration beim Senden
-                                    _sendPiece(group);
-                                  },
-                                );
-                              },
-                            ),
-                          ),
-          ),
-        ],
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -443,78 +442,224 @@ class _StatusHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final connected = status.toLowerCase().contains('verbunden');
-    return Container(
-      margin: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
-      padding: const EdgeInsets.all(18),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(28),
-        boxShadow: const [
-          BoxShadow(color: Colors.black12, blurRadius: 18, offset: Offset(0, 8))
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Icon(
-                connected ? Icons.wifi : Icons.wifi_off,
-                color: connected ? Colors.green : Colors.orange,
-                size: 28,
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Text(
-                  status,
-                  style: const TextStyle(
-                    fontWeight: FontWeight.w600,
-                    fontSize: 16,
-                  ),
-                ),
-              ),
-              if (!connected)
-                ElevatedButton(
-                  onPressed: onConnect,
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.deepPurple,
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 16, vertical: 10),
-                    shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(14)),
-                  ),
-                  child:
-                      const Text('Verbinden', style: TextStyle(fontSize: 14)),
-                ),
-            ],
+    final connected = status.toLowerCase() == 'verbunden';
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(18, 4, 18, 18),
+      child: Container(
+        padding: const EdgeInsets.all(18),
+        decoration: BoxDecoration(
+          gradient: const LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [AppTheme.midnight, Color(0xFF0B5961)],
           ),
-          if (connected) ...[
-            const SizedBox(height: 8),
-            Text(
-              '$musicians Musiker · $conductors Dirigenten verbunden',
-              style: const TextStyle(fontSize: 13, color: Colors.black54),
+          borderRadius: BorderRadius.circular(24),
+          boxShadow: [
+            BoxShadow(
+              color: AppTheme.midnight.withValues(alpha: 0.16),
+              blurRadius: 24,
+              offset: const Offset(0, 10),
             ),
           ],
-          if (maintenanceMode) ...[
-            const SizedBox(height: 8),
-            const Text(
-              '⚠️ Server-Wartungsmodus aktiv',
-              style: TextStyle(
-                fontSize: 13,
-                color: Colors.orange,
-                fontWeight: FontWeight.w600,
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Container(
+                  width: 42,
+                  height: 42,
+                  decoration: BoxDecoration(
+                    color: Colors.white.withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                  child: Icon(
+                    connected ? Icons.wifi_rounded : Icons.wifi_off_rounded,
+                    color: connected ? const Color(0xFF8DE3C0) : AppTheme.amber,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'Serververbindung',
+                        style: TextStyle(color: Colors.white70, fontSize: 12),
+                      ),
+                      Text(
+                        status,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.w700,
+                          fontSize: 16,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                if (!connected)
+                  OutlinedButton(
+                    onPressed: onConnect,
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: Colors.white,
+                      side: const BorderSide(color: Colors.white54),
+                      padding: const EdgeInsets.symmetric(horizontal: 15),
+                    ),
+                    child: const Text('Verbinden'),
+                  ),
+              ],
+            ),
+            if (connected) ...[
+              const SizedBox(height: 18),
+              Row(
+                children: [
+                  _ConnectionCount(
+                    icon: Icons.headphones_rounded,
+                    count: musicians,
+                    label: 'Musiker',
+                  ),
+                  const SizedBox(width: 10),
+                  _ConnectionCount(
+                    icon: Icons.music_note_rounded,
+                    count: conductors,
+                    label: 'Dirigenten',
+                  ),
+                ],
               ),
-            ),
+            ],
+            if (maintenanceMode) ...[
+              const SizedBox(height: 14),
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: AppTheme.amber.withValues(alpha: 0.14),
+                  borderRadius: BorderRadius.circular(15),
+                ),
+                child: const Row(
+                  children: [
+                    Icon(Icons.warning_amber_rounded,
+                        color: AppTheme.amber, size: 19),
+                    SizedBox(width: 9),
+                    Expanded(
+                      child: Text(
+                        'Server-Wartungsmodus aktiv',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
           ],
-        ],
+        ),
       ),
     );
   }
 }
 
-class _PieceCard extends StatefulWidget {
+class _ConnectionCount extends StatelessWidget {
+  final IconData icon;
+  final int count;
+  final String label;
+
+  const _ConnectionCount({
+    required this.icon,
+    required this.count,
+    required this.label,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Expanded(
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        decoration: BoxDecoration(
+          color: Colors.white.withValues(alpha: 0.10),
+          borderRadius: BorderRadius.circular(15),
+        ),
+        child: Row(
+          children: [
+            Icon(icon, size: 17, color: Colors.white70),
+            const SizedBox(width: 8),
+            Text(
+              '$count',
+              style: const TextStyle(
+                  color: Colors.white, fontWeight: FontWeight.w800),
+            ),
+            const SizedBox(width: 5),
+            Expanded(
+              child: Text(
+                label,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(color: Colors.white70, fontSize: 12),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _MessageState extends StatelessWidget {
+  final IconData icon;
+  final String title;
+  final String message;
+  final String? actionLabel;
+  final VoidCallback? onAction;
+
+  const _MessageState({
+    required this.icon,
+    required this.title,
+    required this.message,
+    this.actionLabel,
+    this.onAction,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(28),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 52, color: colors.secondary),
+            const SizedBox(height: 15),
+            Text(title,
+                style: Theme.of(context)
+                    .textTheme
+                    .titleLarge
+                    ?.copyWith(fontWeight: FontWeight.w700)),
+            const SizedBox(height: 7),
+            Text(
+              message,
+              textAlign: TextAlign.center,
+              style: TextStyle(color: colors.onSurfaceVariant, height: 1.4),
+            ),
+            if (actionLabel != null && onAction != null) ...[
+              const SizedBox(height: 18),
+              OutlinedButton.icon(
+                onPressed: onAction,
+                icon: const Icon(Icons.refresh_rounded),
+                label: Text(actionLabel!),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _PieceCard extends StatelessWidget {
   final PieceGroup group;
   final bool active;
   final VoidCallback onSend;
@@ -526,96 +671,80 @@ class _PieceCard extends StatefulWidget {
   });
 
   @override
-  State<_PieceCard> createState() => _PieceCardState();
-}
-
-class _PieceCardState extends State<_PieceCard> {
-  String? _selectedInstrumentVoice;
-
-  @override
-  void initState() {
-    super.initState();
-    if (widget.group.instrumentsAndVoices.isNotEmpty) {
-      _selectedInstrumentVoice = widget.group.instrumentsAndVoices[0];
-    }
-  }
-
-  @override
   Widget build(BuildContext context) {
-    final activeColor = Colors.deepPurpleAccent.shade100;
-
-    return Container(
-      margin: const EdgeInsets.only(bottom: 16),
-      decoration: BoxDecoration(
-        color: widget.active ? activeColor : Colors.white,
-        borderRadius: BorderRadius.circular(24),
-        boxShadow: const [
-          BoxShadow(
-              color: Colors.black12, blurRadius: 16, offset: Offset(0, 6)),
-        ],
-        border: widget.active
-            ? Border.all(color: Colors.deepPurple, width: 2)
-            : null,
-      ),
+    final colors = Theme.of(context).colorScheme;
+    final voices = group.instrumentsAndVoices;
+    return Card(
+      color: active ? colors.secondaryContainer : null,
+      margin: const EdgeInsets.only(bottom: 14),
       child: Padding(
-        padding: const EdgeInsets.all(22),
+        padding: const EdgeInsets.all(18),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Stück-Name
-            Text(
-              widget.group.name,
-              style: TextStyle(
-                fontSize: 19,
-                fontWeight: FontWeight.w700,
-                color: widget.active ? Colors.deepPurple : Colors.black87,
-              ),
-            ),
-            const SizedBox(height: 16),
-
-            // Dropdown für Instrumente/Stimmen
-            if (widget.group.instrumentsAndVoices.isNotEmpty)
-              DropdownButtonFormField<String>(
-                initialValue: _selectedInstrumentVoice,
-                decoration: InputDecoration(
-                  labelText: 'Instrument / Stimme',
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
+            Row(
+              children: [
+                Container(
+                  width: 46,
+                  height: 46,
+                  decoration: BoxDecoration(
+                    color: active ? colors.primary : colors.secondaryContainer,
+                    borderRadius: BorderRadius.circular(16),
                   ),
-                  contentPadding:
-                      const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                  child: Icon(
+                    Icons.music_note_rounded,
+                    color: active ? colors.onPrimary : colors.secondary,
+                  ),
                 ),
-                items: widget.group.instrumentsAndVoices
-                    .map((iv) => DropdownMenuItem(
-                          value: iv,
-                          child: Text(iv),
-                        ))
+                const SizedBox(width: 13),
+                Expanded(
+                  child: Text(
+                    group.name,
+                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                          fontWeight: FontWeight.w800,
+                          color: active ? colors.onSecondaryContainer : null,
+                        ),
+                  ),
+                ),
+                if (active)
+                  Icon(Icons.graphic_eq_rounded, color: colors.secondary),
+              ],
+            ),
+            const SizedBox(height: 14),
+            Text(
+              '${voices.length} ${voices.length == 1 ? 'Stimme' : 'Stimmen'}',
+              style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                    color: colors.onSurfaceVariant,
+                    fontWeight: FontWeight.w600,
+                  ),
+            ),
+            if (voices.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              Wrap(
+                spacing: 7,
+                runSpacing: 7,
+                children: voices
+                    .map(
+                      (voice) => Chip(
+                        visualDensity: VisualDensity.compact,
+                        label: Text(voice),
+                        backgroundColor: active
+                            ? colors.surface.withValues(alpha: 0.72)
+                            : colors.surfaceContainerHighest,
+                        side: BorderSide.none,
+                      ),
+                    )
                     .toList(),
-                onChanged: (value) {
-                  setState(() {
-                    _selectedInstrumentVoice = value;
-                  });
-                },
               ),
-
-            const SizedBox(height: 12),
-
-            Align(
-              alignment: Alignment.centerRight,
-              child: ElevatedButton.icon(
-                onPressed: widget.onSend,
-                icon: const Icon(Icons.send, size: 18),
-                label: const Text('Senden'),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.deepPurple,
-                  foregroundColor: Colors.white,
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                  shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(20)),
-                  elevation: 6,
-                  shadowColor: Colors.deepPurpleAccent.shade100,
-                ),
+              const SizedBox(height: 15),
+            ] else
+              const SizedBox(height: 12),
+            SizedBox(
+              width: double.infinity,
+              child: FilledButton.icon(
+                onPressed: voices.isEmpty ? null : onSend,
+                icon: const Icon(Icons.send_rounded, size: 19),
+                label: const Text('An alle Stimmen senden'),
               ),
             ),
           ],

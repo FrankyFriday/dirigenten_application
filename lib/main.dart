@@ -3,6 +3,7 @@ import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'pages/conductor_page.dart';
 import 'services/notification_service.dart';
+import 'theme/app_theme.dart';
 
 /// =========================
 /// APP ENTRY POINT
@@ -27,13 +28,9 @@ class MyApp extends StatelessWidget {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
       title: 'Marschpad – Dirigent',
-      theme: ThemeData(
-        useMaterial3: true,
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: const Color(0xFF6A1B9A),
-        ),
-        fontFamily: 'Roboto',
-      ),
+      theme: AppTheme.light,
+      darkTheme: AppTheme.dark,
+      themeMode: ThemeMode.system,
       home: const SplashLanding(),
     );
   }
@@ -129,8 +126,8 @@ class _SplashScreenState extends State<SplashScreen>
             begin: Alignment.topCenter,
             end: Alignment.bottomCenter,
             colors: [
-              Color(0xFF4A148C),
-              Color(0xFF7B1FA2),
+              AppTheme.midnight,
+              Color(0xFF0B5961),
             ],
           ),
         ),
