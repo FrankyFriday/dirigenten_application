@@ -59,6 +59,12 @@ jobs:
             <<< "$projects")"
           process_url="$OCTOPUS_URL/api/$space_id/projects/$project_id/deploymentprocess"
           process="$(api_get "$process_url")"
+          if ! jq -e '.Steps | type == "array"' <<< "$process" >/dev/null; then
+            response_keys="$(jq -r 'keys | join(", ")' <<< "$process")"
+            steps_type="$(jq -r '.Steps | type' <<< "$process")"
+            echo "::error::Octopus returned an unexpected deployment-process shape (keys: $response_keys; Steps type: $steps_type)."
+            exit 1
+          fi
           old_count="$(jq -er \
             '[.Steps[] | select(.Name == "Notify Server") | .Actions[] | .. | strings | select(contains("#{Release.Version}"))] | length' \
             <<< "$process")"
