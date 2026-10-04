@@ -140,6 +140,22 @@ jobs:
           channels="$(api_get "$OCTOPUS_URL/api/$space_id/projects/$project_id/channels")"
           echo "Project release channels:"
           jq -r '[if type == "array" then .[] else .Items[]? end | [.Id, .Name, (.IsDefault // false | tostring)]][] | @tsv' <<< "$channels"
+          channel_id="$CHANNEL_ID"
+          if [[ -n "$channel_id" ]]; then
+            channel_id="$(jq -er --arg id "$channel_id" \
+              '[if type == "array" then .[] else .Items[]? end | select(.Id == $id)] | if length == 1 then .[0].Id else error("Requested channel is not available to the project") end' \
+              <<< "$channels")"
+          else
+            channel_id="$(jq -er '
+              [if type == "array" then .[] else .Items[]? end] as $channels
+              | [$channels[] | select(.IsDefault == true)] as $defaults
+              | if ($defaults | length) == 1 then $defaults[0].Id
+                elif ($channels | length) == 1 then $channels[0].Id
+                else error("Expected one default or one available project release channel")
+                end
+            ' <<< "$channels")"
+          fi
+          echo "RESOLVED_CHANNEL_ID=$channel_id" >> "$GITHUB_ENV"
           apk_url="$(jq -r '.Variables[]? | select(.Name == "ApkUrl" and (.IsSensitive // false) == false) | .Value' <<< "$variables" | head -n 1)"
           if [[ -n "$apk_url" ]]; then
             APK_URL="$apk_url" python3 -c 'from urllib.parse import urlparse; import os; u=urlparse(os.environ["APK_URL"]); print("Configured ApkUrl host:", u.hostname or "unset")'
@@ -326,6 +342,9 @@ jobs:
               --no-prompt
           fi
 
+          if [[ -z "$CHANNEL_ID" ]]; then
+            CHANNEL_ID="${RESOLVED_CHANNEL_ID:-}"
+          fi
           if [[ -z "$CHANNEL_ID" ]]; then
             CHANNEL_ID="$(jq -r '.DefaultChannelId // empty' <<< "$project")"
           fi
