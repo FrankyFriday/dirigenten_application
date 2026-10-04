@@ -110,17 +110,15 @@ jobs:
           path: dirigenten_application-${{ steps.release.outputs.version }}.apk
           retention-days: 1
 
-      - name: Upload APK and publish release announcement
+      - name: Upload APK for Octopus deployment
         env:
           NC_USER: ${{ secrets.NC_USER }}
           NC_PASS: ${{ secrets.NC_PASS }}
-          NOTEN_SERVER_API_KEY: ${{ secrets.NOTEN_SERVER_API_KEY }}
-          VERSION: ${{ steps.release.outputs.version }}
           APK: dirigenten_application-${{ steps.release.outputs.version }}.apk
         shell: bash
         run: |
           set -euo pipefail
-          for name in NC_USER NC_PASS NOTEN_SERVER_API_KEY; do
+          for name in NC_USER NC_PASS; do
             if [[ -z "${!name}" ]]; then
               echo "::error::Required GitHub secret $name is not configured."
               exit 1
@@ -128,7 +126,6 @@ jobs:
           done
 
           DAV_ROOT="https://cloud.notenserver.duckdns.org/remote.php/dav/files/$NC_USER"
-          OCS_ROOT="https://cloud.notenserver.duckdns.org/ocs/v2.php/apps/files_sharing/api/v1/shares"
           MKCOL_STATUS="$(curl -sS -o /dev/null -w '%{http_code}' -u "$NC_USER:$NC_PASS" \
             -X MKCOL "$DAV_ROOT/releases")"
           if [[ "$MKCOL_STATUS" != "201" && "$MKCOL_STATUS" != "405" ]]; then
@@ -138,24 +135,6 @@ jobs:
 
           curl --fail --silent --show-error --user "$NC_USER:$NC_PASS" \
             --upload-file "$APK" "$DAV_ROOT/releases/$APK"
-          SHARE_RESPONSE="$(curl --fail --silent --show-error --user "$NC_USER:$NC_PASS" \
-            -H 'OCS-APIRequest: true' -H 'Accept: application/json' \
-            --data-urlencode 'path=/releases/'"$APK" \
-            --data-urlencode 'shareType=3' --data-urlencode 'permissions=1' \
-            "$OCS_ROOT?format=json")"
-          SHARE_URL="$(jq -er 'select((.ocs.meta.statuscode | tostring) == "100") | .ocs.data.url' <<< "$SHARE_RESPONSE")"
-          case "$SHARE_URL" in
-            https://cloud.notenserver.duckdns.org/s/*) ;;
-            *) echo "::error::Nextcloud did not return a public HTTPS share link."; exit 1 ;;
-          esac
-          APK_URL="${SHARE_URL%/}/download"
-
-          curl --fail --silent --show-error --retry 3 --retry-all-errors \
-            -X POST 'https://ws.notenserver.duckdns.org/api/releases' \
-            -H "X-Api-Key: $NOTEN_SERVER_API_KEY" -H 'Content-Type: application/json' \
-            --data "$(jq -n --arg app 'dirigenten_application' --arg version "$VERSION" --arg apkUrl "$APK_URL" \
-              '{app: $app, version: $version, apkUrl: $apkUrl}')" \
-            -o /dev/null
 
       - name: Install Octopus CLI
         uses: OctopusDeploy/install-octopus-cli-action@v3
