@@ -183,7 +183,6 @@ jobs:
             --project "$project_id" \
             --channel "$channel_name" \
             --version "$VERSION" \
-            --ignore-channel-rules \
             --no-prompt
 
           refreshed_releases="$(api_get "$OCTOPUS_URL/api/$space_id/projects/$project_id/releases")"
