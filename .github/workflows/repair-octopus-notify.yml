@@ -18,6 +18,11 @@ on:
         required: true
         type: boolean
         default: true
+      channel_id:
+        description: Existing Octopus channel ID to use if the release must be recreated
+        required: true
+        type: string
+        default: Channels-41
 
 permissions:
   contents: read
@@ -31,6 +36,7 @@ jobs:
       OCTOPUS_SPACE: ${{ secrets.OCTOPUS_SPACE }}
       VERSION: ${{ inputs.version }}
       CONFIRM: ${{ inputs.confirm }}
+      CHANNEL_ID: ${{ inputs.channel_id }}
 
     steps:
       - name: Patch the Notify Server release-version variable
@@ -147,28 +153,35 @@ jobs:
             '[if type == "array" then .[] else .Items[]? end | select(.Version == $version)]' \
             <<< "$releases")"
           release_count="$(jq -er 'length' <<< "$old_release")"
-          if [[ "$release_count" != "1" ]]; then
-            echo "::error::Expected exactly one existing Octopus release $VERSION; found $release_count."
+          if [[ "$release_count" != "0" && "$release_count" != "1" ]]; then
+            echo "::error::Expected at most one existing Octopus release $VERSION; found $release_count."
             exit 1
           fi
 
-          old_release_id="$(jq -er '.[0].Id' <<< "$old_release")"
-          old_channel_id="$(jq -er '.[0].ChannelId' <<< "$old_release")"
-          old_snapshot_id="$(jq -er '.[0].ProjectVariableSetSnapshotId' <<< "$old_release")"
-          package_count="$(jq -er '.[0].SelectedPackages // [] | length' <<< "$old_release")"
-          git_resource_count="$(jq -er '.[0].SelectedGitResources // [] | length' <<< "$old_release")"
-          if [[ "$package_count" != "0" || "$git_resource_count" != "0" ]]; then
-            echo "::error::Release $VERSION has package or Git-resource selections; refusing to recreate it automatically."
-            exit 1
+          old_release_id=""
+          old_snapshot_id=""
+          if [[ "$release_count" == "1" ]]; then
+            old_release_id="$(jq -er '.[0].Id' <<< "$old_release")"
+            CHANNEL_ID="$(jq -er '.[0].ChannelId' <<< "$old_release")"
+            old_snapshot_id="$(jq -er '.[0].ProjectVariableSetSnapshotId' <<< "$old_release")"
+            package_count="$(jq -er '.[0].SelectedPackages // [] | length' <<< "$old_release")"
+            git_resource_count="$(jq -er '.[0].SelectedGitResources // [] | length' <<< "$old_release")"
+            if [[ "$package_count" != "0" || "$git_resource_count" != "0" ]]; then
+              echo "::error::Release $VERSION has package or Git-resource selections; refusing to recreate it automatically."
+              exit 1
+            fi
+
+            octopus release delete \
+              --project "$project_id" \
+              --version "$VERSION" \
+              --no-prompt
           fi
 
-          octopus release delete \
-            --project "$project_id" \
-            --version "$VERSION" \
-            --no-prompt
+          channel="$(api_get "$OCTOPUS_URL/api/$space_id/channels/$CHANNEL_ID")"
+          channel_name="$(jq -er '.Name' <<< "$channel")"
           octopus release create \
             --project "$project_id" \
-            --channel "$old_channel_id" \
+            --channel "$channel_name" \
             --version "$VERSION" \
             --ignore-channel-rules \
             --no-prompt
@@ -183,7 +196,9 @@ jobs:
           fi
           new_release_id="$(jq -er '.[0].Id' <<< "$new_release")"
           new_snapshot_id="$(jq -er '.[0].ProjectVariableSetSnapshotId' <<< "$new_release")"
-          if [[ "$new_release_id" == "$old_release_id" || "$new_snapshot_id" == "$old_snapshot_id" ]]; then
+          if [[ -z "$new_snapshot_id" ||
+                ( -n "$old_release_id" && "$new_release_id" == "$old_release_id" ) ||
+                ( -n "$old_snapshot_id" && "$new_snapshot_id" == "$old_snapshot_id" ) ]]; then
             echo "::error::Octopus did not create a fresh release variable snapshot."
             exit 1
           fi
