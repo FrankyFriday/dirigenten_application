@@ -142,14 +142,7 @@ jobs:
           jq -r '[if type == "array" then .[] else .Items[]? end | [.Id, .Name, (.IsDefault // false | tostring)]][] | @tsv' <<< "$channels"
           apk_url="$(jq -r '.Variables[]? | select(.Name == "ApkUrl" and (.IsSensitive // false) == false) | .Value' <<< "$variables" | head -n 1)"
           if [[ -n "$apk_url" ]]; then
-            apk_url="$(APK_URL="$apk_url" VERSION="$VERSION" python3 -c 'import os,re; u=os.environ["APK_URL"]; v=os.environ["VERSION"]; print(u.replace("#{Octopus.Release.Number}",v).replace("#{Release.Version}",v))')"
-            http_code="$(curl --location --silent --show-error --output /dev/null \
-              --range 0-0 --write-out '%{http_code}' "$apk_url")"
-            if [[ "$http_code" != "200" && "$http_code" != "206" ]]; then
-              echo "::error::The configured musician APK URL is unavailable for version $VERSION (HTTP $http_code)."
-              exit 1
-            fi
-            APK_URL="$apk_url" VERSION="$VERSION" python3 -c 'from urllib.parse import urlparse; import os; u=urlparse(os.environ["APK_URL"]); print("ApkUrl host:", u.hostname or "unset"); print("APK URL reachable:", "yes"); print("APK URL version matches requested release:", "yes" if os.environ["VERSION"] in u.path or os.environ["VERSION"] in u.query else "no")'
+            APK_URL="$apk_url" python3 -c 'from urllib.parse import urlparse; import os; u=urlparse(os.environ["APK_URL"]); print("Configured ApkUrl host:", u.hostname or "unset")'
           else
             echo "No non-sensitive ApkUrl value was found."
           fi
@@ -204,6 +197,85 @@ jobs:
             --value "$NOTEN_SERVER_API_KEY" \
             --no-prompt
           echo "Updated the sensitive Production NotenServerApiKey value for $PROJECT."
+
+      - name: Create a public APK download and update Octopus
+        if: inputs.project == 'musiker_application' && inputs.deploy
+        env:
+          NC_USER: ${{ secrets.NC_USER }}
+          NC_PASS: ${{ secrets.NC_PASS }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          for name in NC_USER NC_PASS; do
+            if [[ -z "${!name}" ]]; then
+              echo "::error::Required Nextcloud setting $name is missing."
+              exit 1
+            fi
+          done
+
+          apk="musiker_application-$VERSION.apk"
+          dav_root="https://cloud.notenserver.duckdns.org/remote.php/dav/files/$NC_USER"
+          file_url="$dav_root/releases/$apk"
+          file_status="$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' \
+            --user "$NC_USER:$NC_PASS" --head "$file_url")"
+          if [[ "$file_status" != "200" ]]; then
+            echo "::error::The versioned Musiker APK is not available in Nextcloud (HTTP $file_status)."
+            exit 1
+          fi
+
+          share_response="$(curl --fail --silent --show-error --user "$NC_USER:$NC_PASS" \
+            -H 'OCS-APIRequest: true' \
+            -H 'Accept: application/json' \
+            --data-urlencode "path=/releases/$apk" \
+            --data-urlencode 'shareType=3' \
+            --data-urlencode 'permissions=1' \
+            "https://cloud.notenserver.duckdns.org/ocs/v2.php/apps/files_sharing/api/v1/shares?format=json")"
+          if ! jq -e '.ocs.meta.statuscode == 200 and (.ocs.data.url | type == "string")' \
+              <<< "$share_response" >/dev/null; then
+            echo "::error::Nextcloud did not create a public read-only APK share."
+            exit 1
+          fi
+          share_url="$(jq -er '.ocs.data.url' <<< "$share_response")"
+          download_url="${share_url%/}/download"
+          download_status="$(curl --location --silent --show-error --output /dev/null \
+            --range 0-0 --write-out '%{http_code}' "$download_url")"
+          if [[ "$download_status" != "200" && "$download_status" != "206" ]]; then
+            echo "::error::The public APK download URL returned HTTP $download_status."
+            exit 1
+          fi
+
+          api_get() {
+            curl --fail --silent --show-error \
+              -H "X-Octopus-ApiKey: $OCTOPUS_API_KEY" \
+              -H 'Accept: application/json' "$1"
+          }
+          spaces="$(api_get "$OCTOPUS_URL/api/spaces/all")"
+          space_id="$(jq -er --arg value "$OCTOPUS_SPACE" \
+            '.[] | select(.Id == $value or .Name == $value) | .Id' \
+            <<< "$spaces" | head -n 1)"
+          projects="$(api_get "$OCTOPUS_URL/api/$space_id/projects/all")"
+          project="$(jq -cer --arg name "$PROJECT" \
+            '.[] | select(.Name == $name)' <<< "$projects")"
+          project_id="$(jq -er '.Id' <<< "$project")"
+          variable_set_id="$(jq -er '.VariableSetId' <<< "$project")"
+          environments="$(api_get "$OCTOPUS_URL/api/$space_id/environments/all")"
+          production_id="$(jq -er \
+            '.[] | select(.Name == "Production") | .Id' <<< "$environments")"
+          variables="$(api_get "$OCTOPUS_URL/api/$space_id/variables/$variable_set_id")"
+          variable_ids="$(jq -er --arg production "$production_id" \
+            '[.Variables[]? | select(.Name == "ApkUrl") | select((.Scope.Environment // []) | index($production)) | .Id] | .[]' \
+            <<< "$variables")"
+          variable_count="$(wc -l <<< "$variable_ids" | tr -d ' ')"
+          if [[ "$variable_count" != "1" ]]; then
+            echo "::error::Expected exactly one Production-scoped ApkUrl variable in $PROJECT; found $variable_count."
+            exit 1
+          fi
+          octopus project variables update ApkUrl \
+            --project "$project_id" \
+            --id "$variable_ids" \
+            --value "$download_url" \
+            --no-prompt
+          echo "Updated the Production APK URL for $VERSION with a verified, public read-only download."
 
       - name: Recreate release with the updated Production variable snapshot
         if: inputs.deploy
