@@ -1,7 +1,9 @@
 package com.example.dirigenten_application
 
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
+import android.provider.Settings
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
@@ -16,11 +18,37 @@ class MainActivity : FlutterActivity() {
 
         MethodChannel(
             flutterEngine.dartExecutor.binaryMessenger,
+            "marschpad/local_network"
+        ).setMethodCallHandler { call, result ->
+            if (call.method != "openHotspotSettings" &&
+                call.method != "openWifiSettings") {
+                result.notImplemented()
+                return@setMethodCallHandler
+            }
+            try {
+                val intent = Intent(
+                    if (call.method == "openWifiSettings") {
+                        Settings.ACTION_WIFI_SETTINGS
+                    } else {
+                        Settings.ACTION_TETHER_SETTINGS
+                    }
+                )
+                if (intent.resolveActivity(packageManager) == null) {
+                    intent.action = Settings.ACTION_WIRELESS_SETTINGS
+                }
+                startActivity(intent)
+                result.success(null)
+            } catch (e: Exception) {
+                result.error("HOTSPOT_SETTINGS_ERROR", e.message, null)
+            }
+        }
+
+        MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
             CHANNEL
         ).setMethodCallHandler { call, result ->
 
             when (call.method) {
-
                 // =====================================================
                 // SIGNATUR DER INSTALLIERTEN APP
                 // =====================================================

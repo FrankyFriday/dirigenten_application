@@ -13,6 +13,8 @@ Probe ausgelegt und unterstützt helle und dunkle Darstellung.
 - Starten und synchrones Beenden eines Stücks auf den Musikergeräten
 - Empfang von Servermeldungen und App-Release-Hinweisen
 - Update-Download mit Prüfung von Paketname, Version und Android-Signatur
+- Lokaler Probenmodus: Stückliste zwischenspeichern und Steuersignale ohne
+  Internet direkt an Musikergeräte im selben WLAN weitergeben
 
 ## Zusammenspiel der Apps
 
@@ -32,6 +34,36 @@ Der Notenserver-Proxy ist derzeit nicht durch eine Anmeldung der Apps
 geschützt. Wer den Server erreichen kann, kann daher die dort bereitgestellte
 Notenliste und PDFs abrufen. Nextcloud-Zugangsdaten gehören ausschließlich in
 die Server- bzw. CI-Konfiguration und niemals in die App.
+
+## Probe ohne Internet
+
+Aktiviere den Schalter **Lokalen Offline-Fallback** im Dirigentenpult. Die App
+startet einen lokalen WebSocket-Server und macht ihn im lokalen WLAN
+automatisch auffindbar. Bei einem Ausfall der Serververbindung wechselt das
+Dirigentenpult automatisch auf diesen lokalen Server und zeigt den Wechsel an.
+Die zuletzt online geladene Stückliste bleibt auf dem Gerät gespeichert.
+
+Für einen Auftritt ohne lokales WLAN kann das Dirigenten-Handy als Hotspot
+dienen: Hotspot in den Android-Systemeinstellungen einschalten und die
+Musikergeräte mit diesem WLAN verbinden. Die Musiker-App benötigt ebenfalls
+den Schalter **Automatisch lokal verbinden**. Sie sucht den lokalen
+Dirigenten-Server, wechselt bei einem Serverausfall automatisch dorthin und
+kehrt zur Internetverbindung zurück, wenn diese wieder verfügbar ist. Android
+erlaubt Apps nicht, den Hotspot ohne Systembestätigung selbst einzuschalten;
+der Offline-Schalter bietet deshalb eine Verknüpfung zu den Hotspot-
+Einstellungen.
+
+Vor dem Losmarschieren müssen die Noten-PDFs auf jedem Musikergerät einmal
+über **Offline-Noten → Synchronisieren** heruntergeladen werden. Start- und
+Stoppsignale funktionieren lokal; nicht gespeicherte PDFs können ohne
+Internet nicht nachgeladen werden. Beide Apps müssen geöffnet bleiben und
+alle Geräte müssen im selben WLAN sein.
+Der lokale WebSocket-Dienst verwendet TCP-Port `8765`; die automatische
+Erkennung nutzt UDP-Port `8766`. Falls automatische Erkennung im WLAN blockiert
+wird, können Musiker die im Dirigentenpult angezeigte Hotspot-IP manuell
+eintragen.
+Die lokale Verbindung ist unverschlüsselt und setzt ein privates,
+passwortgeschütztes Handy-WLAN voraus; kein öffentliches WLAN verwenden.
 
 ## Entwickeln und prüfen
 

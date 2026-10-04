@@ -1,12 +1,15 @@
 import 'dart:async';
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart'; // Für HapticFeedback
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../config/app_config.dart';
 import '../models/piece_group.dart';
 import '../models/update_info.dart';
 import '../services/nextcloud_service.dart';
 import '../services/conductor_socket.dart';
+import '../services/local_session_service.dart';
 import '../services/ui_utils.dart';
 import '../services/version_checker.dart';
 import '../services/notification_service.dart';
@@ -30,6 +33,8 @@ class _ConductorPageState extends ConsumerState<ConductorPage>
   late final String _clientId;
   late final ScrollController _scrollController;
   final TextEditingController _searchController = TextEditingController();
+  static const _localNetworkChannel = MethodChannel('marschpad/local_network');
+  final LocalSessionService _localSession = LocalSessionService();
 
   List<PieceGroup> _pieces = [];
   List<PieceGroup> _filteredPieces = [];
@@ -43,6 +48,8 @@ class _ConductorPageState extends ConsumerState<ConductorPage>
   int _musicians = 0;
   int _conductors = 0;
   bool _maintenanceMode = false;
+  bool _offlineBackupEnabled = false;
+  bool _usingLocalSession = false;
 
   // Verhindert, dass beim gleichen Release mehrfach ein Update-Dialog
   // angezeigt wird (z. B. wenn der Server das Release erneut broadcastet).
@@ -56,13 +63,11 @@ class _ConductorPageState extends ConsumerState<ConductorPage>
     _clientId = const Uuid().v4();
     _socket = ConductorSocket(
       clientId: _clientId,
-      onStatusUpdate: (s) {
-        if (!mounted) return;
-        setState(() => _status = s);
-      },
+      onStatusUpdate: _handleSocketStatus,
       onMessage: _handleWSMessage,
     );
     _loadPieces();
+    _loadOfflineBackupPreference();
     _socket.connect();
     // Hinweis: Ein eigener Client-seitiger Ping-Heartbeat ist hier nicht
     // nötig und würde nicht zum Server-Protokoll passen – der Server
@@ -71,6 +76,128 @@ class _ConductorPageState extends ConsumerState<ConductorPage>
     // vom Client initiiertes 'ping' würde vom Server nicht als Heartbeat
     // erkannt, sondern (mangels eigener Behandlung) an alle verbundenen
     // Clients weitergebroadcastet.
+  }
+
+  Future<void> _loadOfflineBackupPreference() async {
+    final prefs = await SharedPreferences.getInstance();
+    final enabled = prefs.getBool('offlineBackupEnabled') ?? false;
+    if (!mounted || !enabled) return;
+    setState(() => _offlineBackupEnabled = true);
+    await _startLocalBackup();
+  }
+
+  void _handleSocketStatus(String status) {
+    if (!mounted) return;
+    final wasUsingLocalSession = _usingLocalSession;
+    setState(() {
+      if (status == 'Verbunden') {
+        _usingLocalSession = false;
+      } else if (status == 'Fehler' || status == 'Getrennt') {
+        _usingLocalSession = _offlineBackupEnabled && _localSession.isRunning;
+      }
+      _status = _usingLocalSession ? 'Lokaler Probenmodus' : status;
+    });
+    if (_usingLocalSession && !wasUsingLocalSession) {
+      UIUtils.showSnackbar(
+        context,
+        'Internetverbindung verloren – Steuerung läuft jetzt lokal.',
+      );
+    }
+  }
+
+  Future<void> _toggleOfflineBackup() async {
+    final nextValue = !_offlineBackupEnabled;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('offlineBackupEnabled', nextValue);
+    if (!mounted) return;
+    setState(() {
+      _offlineBackupEnabled = nextValue;
+      if (!nextValue) _usingLocalSession = false;
+    });
+
+    if (nextValue) {
+      await _startLocalBackup();
+      if (!mounted) return;
+      await showDialog<void>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: const Text('Lokaler Probenmodus bereit'),
+          content: Text(
+            'Verbinde die Musikergeräte mit dem WLAN-Hotspot dieses Handys. '
+            'Der lokale Server läuft unter ${_localSession.address ?? 'wird ermittelt'} '
+            'und benötigt keine Internetverbindung.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('Später'),
+            ),
+            FilledButton.icon(
+              onPressed: () async {
+                Navigator.pop(dialogContext);
+                try {
+                  await _localNetworkChannel
+                      .invokeMethod<void>('openHotspotSettings');
+                } on PlatformException catch (error) {
+                  if (!mounted) return;
+                  UIUtils.showSnackbar(
+                    context,
+                    'Hotspot-Einstellungen konnten nicht geöffnet werden: '
+                    '${error.message}',
+                  );
+                }
+              },
+              icon: const Icon(Icons.wifi_tethering_rounded),
+              label: const Text('Hotspot öffnen'),
+            ),
+          ],
+        ),
+      );
+    } else {
+      await _localSession.stop();
+      if (!mounted) return;
+      setState(() {
+        _usingLocalSession = false;
+        _musicians = 0;
+        if (!_socket.isConnected) _status = 'Getrennt';
+      });
+      UIUtils.showSnackbar(context, 'Offline-Fallback ausgeschaltet.');
+    }
+  }
+
+  Future<void> _startLocalBackup() async {
+    try {
+      _localSession.onAddressChanged = (_) {
+        if (mounted) setState(() {});
+      };
+      _localSession.onMusicianCountChanged = (count) {
+        if (mounted) setState(() => _musicians = count);
+      };
+      await _localSession.start();
+      if (!mounted) return;
+      setState(() {});
+      if (!_socket.isConnected &&
+          (_status == 'Fehler' || _status == 'Getrennt')) {
+        setState(() {
+          _usingLocalSession = true;
+          _status = 'Lokaler Probenmodus';
+        });
+      }
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _offlineBackupEnabled = false;
+        _usingLocalSession = false;
+      });
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool('offlineBackupEnabled', false);
+      if (!mounted) return;
+      UIUtils.showSnackbar(
+        context,
+        'Lokaler Server konnte nicht starten. '
+        'Hotspot prüfen und erneut versuchen: $error',
+      );
+    }
   }
 
   @override
@@ -86,22 +213,112 @@ class _ConductorPageState extends ConsumerState<ConductorPage>
   Future<void> _loadPieces() async {
     if (mounted) {
       setState(() {
-        _loading = true;
+        _loading = _pieces.isEmpty;
         _piecesError = null;
       });
     }
+    SharedPreferences? prefs;
+    String? cached;
     try {
-      _pieces = await _service.loadPieces();
-      _filteredPieces = List.from(_pieces);
+      prefs = await SharedPreferences.getInstance();
+      cached = prefs.getString('cachedConductorPieces');
+    } catch (error, stackTrace) {
+      UpdateLogger.error(
+        'Gespeicherte Stückliste konnte nicht gelesen werden.',
+        error,
+        stackTrace,
+      );
+    }
+
+    if (_pieces.isEmpty && cached != null) {
+      try {
+        final cachedPieces = _decodeCachedPieces(cached);
+        if (cachedPieces.isNotEmpty && mounted) {
+          setState(() {
+            _pieces = cachedPieces;
+            _filteredPieces = List.from(cachedPieces);
+            _loading = false;
+          });
+        }
+      } on FormatException {
+        UpdateLogger.warning('Gespeicherte Stückliste ist ungültig.');
+      } on TypeError {
+        UpdateLogger.warning(
+            'Gespeicherte Stückliste hat ein falsches Format.');
+      }
+    }
+    try {
+      final loadedPieces = await _service.loadPieces();
+      if (!mounted) return;
+      setState(() {
+        _pieces = loadedPieces;
+        _filteredPieces = List.from(loadedPieces);
+      });
+      try {
+        await prefs?.setString(
+          'cachedConductorPieces',
+          jsonEncode(
+            loadedPieces
+                .map((piece) => {
+                      'name': piece.name,
+                      'instrumentsAndVoices': piece.instrumentsAndVoices,
+                    })
+                .toList(),
+          ),
+        );
+      } catch (error, stackTrace) {
+        UpdateLogger.error(
+          'Stückliste konnte nicht lokal gespeichert werden.',
+          error,
+          stackTrace,
+        );
+      }
     } catch (e) {
       if (!mounted) return;
-      setState(() => _piecesError = e.toString());
-      UIUtils.showSnackbar(context, 'Fehler beim Laden: $e');
+      if (cached != null) {
+        try {
+          _pieces = _decodeCachedPieces(cached);
+          if (_pieces.isNotEmpty) {
+            _filteredPieces = List.from(_pieces);
+            UIUtils.showSnackbar(
+              context,
+              'Server nicht erreichbar – gespeicherte Stückliste wird '
+              'verwendet.',
+            );
+          } else {
+            setState(() => _piecesError = e.toString());
+          }
+        } on FormatException {
+          setState(() => _piecesError = e.toString());
+        } on TypeError {
+          setState(() => _piecesError = e.toString());
+        }
+      } else {
+        setState(() => _piecesError = e.toString());
+        if (!mounted) return;
+        UIUtils.showSnackbar(context, 'Fehler beim Laden: $e');
+      }
     } finally {
       if (mounted) {
         setState(() => _loading = false);
       }
     }
+  }
+
+  List<PieceGroup> _decodeCachedPieces(String source) {
+    final decoded = jsonDecode(source);
+    if (decoded is! List) {
+      throw const FormatException('Gespeicherte Stückliste ist ungültig.');
+    }
+    return decoded
+        .whereType<Map>()
+        .map((entry) => PieceGroup(
+              name: entry['name'] as String,
+              instrumentsAndVoices: (entry['instrumentsAndVoices'] as List)
+                  .whereType<String>()
+                  .toList(),
+            ))
+        .toList();
   }
 
   void _handleWSMessage(Map<String, dynamic> msg) async {
@@ -249,24 +466,40 @@ class _ConductorPageState extends ConsumerState<ConductorPage>
   }
 
   void _sendPiece(PieceGroup group) {
-    if (!_socket.isConnected) return;
+    if (!_socket.isConnected && !_usingLocalSession) return;
     setState(() => _currentPiece = group);
     for (var iv in group.instrumentsAndVoices) {
       final parts = iv.split(' ');
       if (parts.length < 2) continue;
-      _socket.send({
+      final message = {
         'type': 'send_piece_signal',
         'name': group.name,
         'instrument': parts[0],
         'voice': parts[1],
-      });
+      };
+      if (_usingLocalSession) {
+        _localSession.send(message);
+      } else {
+        _socket.send(message);
+      }
     }
     UIUtils.showSnackbar(context, 'Stück gesendet: ${group.name}');
   }
 
   void _endPiece() {
-    if (!_socket.isConnected || _currentPiece == null) return;
-    _socket.send({'type': 'end_piece_signal', 'name': _currentPiece!.name});
+    if ((!_socket.isConnected && !_usingLocalSession) ||
+        _currentPiece == null) {
+      return;
+    }
+    final message = {
+      'type': 'end_piece_signal',
+      'name': _currentPiece!.name,
+    };
+    if (_usingLocalSession) {
+      _localSession.send(message);
+    } else {
+      _socket.send(message);
+    }
     setState(() => _currentPiece = null);
   }
 
@@ -287,6 +520,7 @@ class _ConductorPageState extends ConsumerState<ConductorPage>
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _socket.disconnect();
+    _localSession.stop();
     _scrollController.dispose();
     _searchController.dispose();
     super.dispose();
@@ -331,6 +565,39 @@ class _ConductorPageState extends ConsumerState<ConductorPage>
               maintenanceMode: _maintenanceMode,
               onConnect: _socket.isConnected ? null : _socket.connect,
             ),
+            Card(
+              margin: const EdgeInsets.fromLTRB(18, -8, 18, 12),
+              child: SwitchListTile(
+                value: _offlineBackupEnabled,
+                onChanged: (_) => _toggleOfflineBackup(),
+                secondary: const Icon(Icons.wifi_tethering_rounded),
+                title: const Text('Lokalen Offline-Fallback'),
+                subtitle: Text(
+                  _usingLocalSession
+                      ? 'Aktiv · Steuerung läuft lokal'
+                      : 'Bereitet den Probenserver für Internet-Ausfälle vor',
+                ),
+              ),
+            ),
+            if (_offlineBackupEnabled)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(18, 0, 18, 12),
+                child: MaterialBanner(
+                  content: Text(
+                    _usingLocalSession
+                        ? 'Offline aktiv · Hotspot-IP ${_localSession.address ?? 'wird ermittelt'}'
+                        : 'Offline-Fallback bereit · Hotspot-IP '
+                            '${_localSession.address ?? 'wird ermittelt'}',
+                  ),
+                  leading: const Icon(Icons.wifi_tethering_rounded),
+                  actions: [
+                    TextButton(
+                      onPressed: _toggleOfflineBackup,
+                      child: const Text('AUS'),
+                    ),
+                  ],
+                ),
+              ),
             if (_currentPiece != null)
               Padding(
                 padding: const EdgeInsets.fromLTRB(18, 0, 18, 12),
