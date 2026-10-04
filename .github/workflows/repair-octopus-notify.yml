@@ -13,6 +13,11 @@ on:
         required: true
         type: string
         default: "1.0.35"
+      deploy:
+        description: Start the Production deployment after repairing the process
+        required: true
+        type: boolean
+        default: true
 
 permissions:
   contents: read
@@ -99,14 +104,26 @@ jobs:
             echo "::error::Octopus process still contains the unresolved token."
             exit 1
           fi
-          echo "Updated the Notify Server version token in the conductor Production process."
+          echo "Verified the Notify Server version token in the conductor Production process."
+          variable_set_id="$(jq -er '.VariableSetId' <<< "$project")"
+          variables="$(api_get "$OCTOPUS_URL/api/$space_id/variables/$variable_set_id")"
+          echo "Matching Octopus project variable names (values intentionally withheld):"
+          jq -r \
+            '.Variables[]? | select(.Name | test("noten|server|api|key"; "i")) | [.Name, (.IsSensitive // false | tostring)] | @tsv' \
+            <<< "$variables"
+          echo "Notify Server action variable references:"
+          jq -r \
+            '[.Steps[] | select(.Name == "Notify Server") | .Actions[] | .Properties[]? | strings | scan("#\\{[^}]+\\}")] | unique | .[]' \
+            <<< "$verified"
 
       - name: Install Octopus CLI
+        if: inputs.deploy
         uses: OctopusDeploy/install-octopus-cli-action@v3
         with:
           version: latest
 
       - name: Redeploy conductor release to Production
+        if: inputs.deploy
         run: |
           octopus release deploy \
             --project "dirigenten_application" \
