@@ -6,9 +6,8 @@ on:
       confirm:
         description: Confirm patching the Production Notify Server process step
         required: true
-        type: choice
-        options:
-          - yes
+        type: boolean
+        default: false
       version:
         description: Existing conductor release version to redeploy
         required: true
@@ -26,6 +25,7 @@ jobs:
       OCTOPUS_API_KEY: ${{ secrets.OCTOPUS_API_KEY }}
       OCTOPUS_SPACE: ${{ secrets.OCTOPUS_SPACE }}
       VERSION: ${{ inputs.version }}
+      CONFIRM: ${{ inputs.confirm }}
 
     steps:
       - name: Patch the Notify Server release-version variable
@@ -38,6 +38,10 @@ jobs:
               exit 1
             fi
           done
+          if [[ "$CONFIRM" != "true" ]]; then
+            echo "::error::Set the confirm input to true to update the Production process."
+            exit 1
+          fi
 
           api_get() {
             curl --fail --silent --show-error \
