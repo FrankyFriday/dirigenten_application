@@ -69,20 +69,27 @@ jobs:
           old_count="$(jq -er \
             '[.Steps[] | select(.Name == "Notify Server") | .Actions[] | .. | strings | select(contains("#{Release.Version}"))] | length' \
             <<< "$process")"
-          if [[ "$old_count" == "0" ]]; then
-            echo "::error::The Notify Server step does not contain the failed Release.Version token."
+          correct_count="$(jq -er \
+            '[.Steps[] | select(.Name == "Notify Server") | .Actions[] | .. | strings | select(contains("#{Octopus.Release.Number}"))] | length' \
+            <<< "$process")"
+          if [[ "$old_count" == "0" && "$correct_count" == "0" ]]; then
+            echo "::error::The Notify Server step contains neither the failed nor the expected release-version token."
             exit 1
           fi
 
-          patched="$(jq --arg step "Notify Server" \
-            '(.Steps[] | select(.Name == $step) | .Actions[]) |= walk(if type == "string" then gsub("#\\{Release\\.Version\\}"; "#{Octopus.Release.Number}") else . end)' \
-            <<< "$process")"
-          curl --fail --silent --show-error \
-            -X PUT \
-            -H "X-Octopus-ApiKey: $OCTOPUS_API_KEY" \
-            -H 'Content-Type: application/json' \
-            --data-binary "$patched" \
-            -o /dev/null "$process_url"
+          if [[ "$old_count" != "0" ]]; then
+            patched="$(jq --arg step "Notify Server" \
+              '(.Steps[] | select(.Name == $step) | .Actions[]) |= walk(if type == "string" then gsub("#\\{Release\\.Version\\}"; "#{Octopus.Release.Number}") else . end)' \
+              <<< "$process")"
+            curl --fail --silent --show-error \
+              -X PUT \
+              -H "X-Octopus-ApiKey: $OCTOPUS_API_KEY" \
+              -H 'Content-Type: application/json' \
+              --data-binary "$patched" \
+              -o /dev/null "$process_url"
+          else
+            echo "The current Notify Server process already uses Octopus.Release.Number."
+          fi
 
           verified="$(api_get "$process_url")"
           remaining="$(jq -er \
