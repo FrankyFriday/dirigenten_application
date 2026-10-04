@@ -26,6 +26,11 @@ on:
         required: true
         type: boolean
         default: true
+      sync_server_key:
+        description: Update the project's sensitive Production NotenServerApiKey variable
+        required: true
+        type: boolean
+        default: false
       channel_id:
         description: Octopus channel ID (leave empty to use the project's default channel)
         required: false
@@ -131,12 +136,67 @@ jobs:
           else
             echo "Project has no default release channel."
           fi
+          project_id="$(jq -er '.Id' <<< "$project")"
+          channels="$(api_get "$OCTOPUS_URL/api/$space_id/projects/$project_id/channels")"
+          echo "Project release channels:"
+          jq -r '[if type == "array" then .[] else .Items[]? end | [.Id, .Name, (.IsDefault // false | tostring)]][] | @tsv' <<< "$channels"
+          apk_url="$(jq -r '.Variables[]? | select(.Name == "ApkUrl" and (.IsSensitive // false) == false) | .Value' <<< "$variables" | head -n 1)"
+          if [[ -n "$apk_url" ]]; then
+            APK_URL="$apk_url" python3 -c 'from urllib.parse import urlparse; import os; u=urlparse(os.environ["APK_URL"]); print("ApkUrl host:", u.hostname or "unset"); print("ApkUrl file:", u.path.rstrip("/").rsplit("/", 1)[-1] or "unset"); print("ApkUrl has release token:", "yes" if "#{Octopus.Release.Number}" in u.path else "no")'
+          else
+            echo "No non-sensitive ApkUrl value was found."
+          fi
 
       - name: Install Octopus CLI
-        if: inputs.deploy
+        if: inputs.deploy || inputs.sync_server_key
         uses: OctopusDeploy/install-octopus-cli-action@v3
         with:
           version: latest
+
+      - name: Sync the sensitive Production server API key
+        if: inputs.sync_server_key
+        env:
+          NOTEN_SERVER_API_KEY: ${{ secrets.NOTEN_SERVER_API_KEY }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "$NOTEN_SERVER_API_KEY" ]]; then
+            echo "::error::The NOTEN_SERVER_API_KEY repository secret is not configured."
+            exit 1
+          fi
+
+          api_get() {
+            curl --fail --silent --show-error \
+              -H "X-Octopus-ApiKey: $OCTOPUS_API_KEY" \
+              -H 'Accept: application/json' "$1"
+          }
+          spaces="$(api_get "$OCTOPUS_URL/api/spaces/all")"
+          space_id="$(jq -er --arg value "$OCTOPUS_SPACE" \
+            '.[] | select(.Id == $value or .Name == $value) | .Id' \
+            <<< "$spaces" | head -n 1)"
+          projects="$(api_get "$OCTOPUS_URL/api/$space_id/projects/all")"
+          project="$(jq -cer --arg name "$PROJECT" \
+            '.[] | select(.Name == $name)' <<< "$projects")"
+          project_id="$(jq -er '.Id' <<< "$project")"
+          variable_set_id="$(jq -er '.VariableSetId' <<< "$project")"
+          environments="$(api_get "$OCTOPUS_URL/api/$space_id/environments/all")"
+          production_id="$(jq -er \
+            '.[] | select(.Name == "Production") | .Id' <<< "$environments")"
+          variables="$(api_get "$OCTOPUS_URL/api/$space_id/variables/$variable_set_id")"
+          variable_ids="$(jq -er --arg production "$production_id" \
+            '[.Variables[]? | select(.Name == "NotenServerApiKey") | select((.Scope.Environment // []) | index($production)) | .Id] | .[]' \
+            <<< "$variables")"
+          variable_count="$(wc -l <<< "$variable_ids" | tr -d ' ')"
+          if [[ "$variable_count" != "1" ]]; then
+            echo "::error::Expected exactly one Production-scoped NotenServerApiKey variable in $PROJECT; found $variable_count."
+            exit 1
+          fi
+          octopus project variables update NotenServerApiKey \
+            --project "$project_id" \
+            --id "$variable_ids" \
+            --value "$NOTEN_SERVER_API_KEY" \
+            --no-prompt
+          echo "Updated the sensitive Production NotenServerApiKey value for $PROJECT."
 
       - name: Recreate release with the updated Production variable snapshot
         if: inputs.deploy
@@ -170,9 +230,6 @@ jobs:
 
           old_release_id=""
           old_snapshot_id=""
-          if [[ -z "$CHANNEL_ID" ]]; then
-            CHANNEL_ID="$(jq -er '.DefaultChannelId' <<< "$project")"
-          fi
           if [[ "$release_count" == "1" ]]; then
             old_release_id="$(jq -er '.[0].Id' <<< "$old_release")"
             CHANNEL_ID="$(jq -er '.[0].ChannelId' <<< "$old_release")"
@@ -190,6 +247,13 @@ jobs:
               --no-prompt
           fi
 
+          if [[ -z "$CHANNEL_ID" ]]; then
+            CHANNEL_ID="$(jq -r '.DefaultChannelId // empty' <<< "$project")"
+          fi
+          if [[ -z "$CHANNEL_ID" ]]; then
+            echo "::error::No existing release channel or project default channel is available for $PROJECT; specify channel_id."
+            exit 1
+          fi
           channel="$(api_get "$OCTOPUS_URL/api/$space_id/channels/$CHANNEL_ID")"
           channel_name="$(jq -er '.Name' <<< "$channel")"
           octopus release create \
