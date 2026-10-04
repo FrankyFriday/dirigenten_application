@@ -142,7 +142,14 @@ jobs:
           jq -r '[if type == "array" then .[] else .Items[]? end | [.Id, .Name, (.IsDefault // false | tostring)]][] | @tsv' <<< "$channels"
           apk_url="$(jq -r '.Variables[]? | select(.Name == "ApkUrl" and (.IsSensitive // false) == false) | .Value' <<< "$variables" | head -n 1)"
           if [[ -n "$apk_url" ]]; then
-            APK_URL="$apk_url" python3 -c 'from urllib.parse import urlparse; import os; u=urlparse(os.environ["APK_URL"]); print("ApkUrl host:", u.hostname or "unset"); print("ApkUrl file:", u.path.rstrip("/").rsplit("/", 1)[-1] or "unset"); print("ApkUrl has release token:", "yes" if "#{Octopus.Release.Number}" in u.path else "no")'
+            apk_url="$(APK_URL="$apk_url" VERSION="$VERSION" python3 -c 'import os,re; u=os.environ["APK_URL"]; v=os.environ["VERSION"]; print(u.replace("#{Octopus.Release.Number}",v).replace("#{Release.Version}",v))')"
+            http_code="$(curl --location --silent --show-error --output /dev/null \
+              --range 0-0 --write-out '%{http_code}' "$apk_url")"
+            if [[ "$http_code" != "200" && "$http_code" != "206" ]]; then
+              echo "::error::The configured musician APK URL is unavailable for version $VERSION (HTTP $http_code)."
+              exit 1
+            fi
+            APK_URL="$apk_url" VERSION="$VERSION" python3 -c 'from urllib.parse import urlparse; import os; u=urlparse(os.environ["APK_URL"]); print("ApkUrl host:", u.hostname or "unset"); print("APK URL reachable:", "yes"); print("APK URL version matches requested release:", "yes" if os.environ["VERSION"] in u.path or os.environ["VERSION"] in u.query else "no")'
           else
             echo "No non-sensitive ApkUrl value was found."
           fi
@@ -254,13 +261,20 @@ jobs:
             echo "::error::No existing release channel or project default channel is available for $PROJECT; specify channel_id."
             exit 1
           fi
-          channel="$(api_get "$OCTOPUS_URL/api/$space_id/channels/$CHANNEL_ID")"
-          channel_name="$(jq -er '.Name' <<< "$channel")"
-          octopus release create \
-            --project "$project_id" \
-            --channel "$channel_name" \
-            --version "$VERSION" \
-            --no-prompt
+          if [[ -n "$CHANNEL_ID" ]]; then
+            channel="$(api_get "$OCTOPUS_URL/api/$space_id/channels/$CHANNEL_ID")"
+            channel_name="$(jq -er '.Name' <<< "$channel")"
+            octopus release create \
+              --project "$project_id" \
+              --channel "$channel_name" \
+              --version "$VERSION" \
+              --no-prompt
+          else
+            octopus release create \
+              --project "$project_id" \
+              --version "$VERSION" \
+              --no-prompt
+          fi
 
           refreshed_releases="$(api_get "$OCTOPUS_URL/api/$space_id/projects/$project_id/releases")"
           new_release="$(jq -cer --arg version "$VERSION" \
