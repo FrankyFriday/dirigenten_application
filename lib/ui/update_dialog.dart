@@ -1,7 +1,9 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter/services.dart';
 import 'package:open_filex/open_filex.dart';
 
 import '../models/update_info.dart';
@@ -14,6 +16,9 @@ class UpdateDialog extends ConsumerWidget {
   final UpdateInfo updateInfo;
 
   const UpdateDialog({super.key, required this.updateInfo});
+
+  static const _installationChannel =
+      MethodChannel('marschpad/apk_installation');
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -81,6 +86,26 @@ class UpdateDialog extends ConsumerWidget {
 
   Future<void> _startDownload(BuildContext context, WidgetRef ref) async {
     if (ref.read(downloadInProgressProvider)) return;
+
+    if (Platform.isAndroid) {
+      final canInstall = await _installationChannel.invokeMethod<bool>(
+        'ensureInstallPermission',
+      );
+      if (canInstall != true) {
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text(
+                'Erlaube Marschpad in den Android-Einstellungen, Apps zu '
+                'installieren. Kehre danach zurück und tippe erneut auf '
+                '„Herunterladen“.',
+              ),
+            ),
+          );
+        }
+        return;
+      }
+    }
 
     final downloadingNotifier = ref.read(downloadInProgressProvider.notifier);
     final progressNotifier = ref.read(downloadProgressProvider.notifier);

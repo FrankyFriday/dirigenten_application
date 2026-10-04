@@ -45,6 +45,34 @@ class MainActivity : FlutterActivity() {
 
         MethodChannel(
             flutterEngine.dartExecutor.binaryMessenger,
+            "marschpad/apk_installation"
+        ).setMethodCallHandler { call, result ->
+            if (call.method != "ensureInstallPermission") {
+                result.notImplemented()
+                return@setMethodCallHandler
+            }
+
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O ||
+                packageManager.canRequestPackageInstalls()) {
+                result.success(true)
+                return@setMethodCallHandler
+            }
+
+            try {
+                startActivity(
+                    Intent(
+                        Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                        android.net.Uri.parse("package:$packageName")
+                    )
+                )
+                result.success(false)
+            } catch (e: Exception) {
+                result.error("INSTALL_PERMISSION_SETTINGS_ERROR", e.message, null)
+            }
+        }
+
+        MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
             CHANNEL
         ).setMethodCallHandler { call, result ->
 
