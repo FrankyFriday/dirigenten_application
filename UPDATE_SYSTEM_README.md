@@ -64,5 +64,9 @@ credentials are not embedded in the app.
   configured `releases` folder.
 - **Octopus deployment or announcement fails:** verify the project, Production
   environment, server API key, and public HTTPS APK URL in Octopus.
+- If the **Notify Server** step reports an unresolved `#{Release.Version}`
+  token, run the **Repair Octopus notify step** workflow and provide the
+  existing conductor release version. It replaces the invalid token with
+  `#{Octopus.Release.Number}` and redeploys that release.
 - **The app rejects an APK:** check that the uploaded APK has the expected
   package ID and version and was signed with the original app keystore.
