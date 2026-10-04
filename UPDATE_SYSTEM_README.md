@@ -23,6 +23,18 @@ Actions, Octopus, and client registration retain the IDs
 `dirigenten_app` and `musiker_app` in release announcements; clients accept both
 the long and canonical IDs.
 
+## Accessing sheet music
+
+The apps read `GET /api/notes` and download PDFs from
+`GET /api/notes/<relative-path>` on the noten-server. The server uses the
+Nextcloud WebDAV credentials from its environment and limits these requests to
+PDF files beneath the Nextcloud `noten` folder. Nextcloud credentials are never
+included in either APK.
+
+The notes API intentionally has no app login. As a result, anyone who can reach
+the noten-server can list and download PDFs from that folder; do not store
+private or unrelated files in `noten`.
+
 ## Publishing a release
 
 - Push a `vX.Y.Z` tag, or run **Android Release** manually and enter `X.Y.Z`.
