@@ -24,31 +24,24 @@ class DownloadService {
     final parsed = Uri.tryParse(raw);
 
     if (parsed == null) {
-      throw FormatException(
-        'Ungültige Download-URL: $value',
-      );
+      throw FormatException('Ungültige Download-URL: $value');
     }
 
     // Absolute URL
     if (parsed.hasScheme) {
       if (!parsed.hasAuthority ||
           (parsed.scheme != 'http' && parsed.scheme != 'https')) {
-        throw FormatException(
-          'Ungültige Download-URL: $value',
-        );
+        throw FormatException('Ungültige Download-URL: $value');
       }
 
       return parsed;
     }
 
     // Relative URL -> Nextcloud Base URL
-    final baseValue =
-        dotenv.env['NEXTCLOUD_BASE_URL']?.trim() ?? '';
+    final baseValue = dotenv.env['NEXTCLOUD_BASE_URL']?.trim() ?? '';
 
     if (baseValue.isEmpty) {
-      throw StateError(
-        'NEXTCLOUD_BASE_URL fehlt in der .env.',
-      );
+      throw StateError('NEXTCLOUD_BASE_URL fehlt in der .env.');
     }
 
     final base = Uri.tryParse(baseValue);
@@ -57,9 +50,7 @@ class DownloadService {
         !base.hasScheme ||
         !base.hasAuthority ||
         (base.scheme != 'http' && base.scheme != 'https')) {
-      throw StateError(
-        'NEXTCLOUD_BASE_URL ist ungültig: $baseValue',
-      );
+      throw StateError('NEXTCLOUD_BASE_URL ist ungültig: $baseValue');
     }
 
     final resolved = raw.startsWith('/')
@@ -72,18 +63,15 @@ class DownloadService {
 
     if (!resolved.hasScheme ||
         !resolved.hasAuthority ||
-        (resolved.scheme != 'http' &&
-            resolved.scheme != 'https')) {
-      throw FormatException(
-        'Ungültige aufgelöste Download-URL: $value',
-      );
+        (resolved.scheme != 'http' && resolved.scheme != 'https')) {
+      throw FormatException('Ungültige aufgelöste Download-URL: $value');
     }
 
     return resolved;
   }
 
   String _safeUri(Uri uri) {
-    return uri.replace(userInfo: '').toString();
+    return uri.origin;
   }
 
   Future<String?> downloadFile(
@@ -94,7 +82,6 @@ class DownloadService {
     try {
       UpdateLogger.info('========================================');
       UpdateLogger.info('UPDATE DOWNLOAD START');
-      UpdateLogger.info('Original URL: $url');
       UpdateLogger.info('Filename: $fileName');
 
       // ------------------------------------------------------------
@@ -103,111 +90,71 @@ class DownloadService {
 
       final downloadUri = _resolveDownloadUri(url);
 
-      UpdateLogger.info(
-        'Resolved URL: ${_safeUri(downloadUri)}',
-      );
+      UpdateLogger.info('Resolved download host: ${_safeUri(downloadUri)}');
 
       // ------------------------------------------------------------
       // STORAGE
       // ------------------------------------------------------------
 
-      final directory = await getExternalStorageDirectory();
-
-      if (directory == null) {
-        UpdateLogger.error(
-          'getExternalStorageDirectory() returned null.',
-        );
-
-        progressController.addError(
-          Exception(
-            'Kein Speicherverzeichnis verfügbar.',
-          ),
-        );
-
-        return null;
-      }
+      final directory =
+          await getExternalStorageDirectory() ??
+          await getApplicationDocumentsDirectory();
 
       final downloadDirectory = Directory(directory.path);
 
       if (!await downloadDirectory.exists()) {
-        await downloadDirectory.create(
-          recursive: true,
-        );
+        await downloadDirectory.create(recursive: true);
       }
 
-      final filePath =
-          '${downloadDirectory.path}/$fileName';
+      final filePath = '${downloadDirectory.path}/$fileName';
 
-      UpdateLogger.info(
-        'Download directory: ${downloadDirectory.path}',
-      );
+      UpdateLogger.info('Download directory: ${downloadDirectory.path}');
 
-      UpdateLogger.info(
-        'Target file: $filePath',
-      );
+      UpdateLogger.info('Target file: $filePath');
 
       // ------------------------------------------------------------
       // NEXTCLOUD LOGIN
       // ------------------------------------------------------------
 
       final username =
-          dotenv.env['NC_USER']?.trim() ?? '';
-
+          (dotenv.env['NC_USER'] ?? dotenv.env['NEXTCLOUD_USER'] ?? '').trim();
       final password =
-          dotenv.env['NC_PASS'] ?? '';
-
-      if (username.isEmpty) {
+          dotenv.env['NC_PASS'] ?? dotenv.env['NEXTCLOUD_PASSWORD'] ?? '';
+      if (username.isEmpty != password.isEmpty) {
         throw StateError(
-          'NEXTCLOUD_USER fehlt in der .env.',
+          'Nextcloud-Benutzername und Passwort müssen gemeinsam gesetzt sein.',
         );
       }
 
-      if (password.isEmpty) {
-        throw StateError(
-          'NEXTCLOUD_PASSWORD fehlt in der .env.',
-        );
+      final headers = <String, String>{
+        'Accept': '*/*',
+        'User-Agent': 'DirigentenApp/1.0',
+      };
+      final baseValue = dotenv.env['NEXTCLOUD_BASE_URL']?.trim() ?? '';
+      final baseUri = Uri.tryParse(baseValue);
+      if (username.isNotEmpty &&
+          baseUri != null &&
+          baseUri.hasAuthority &&
+          baseUri.origin == downloadUri.origin) {
+        headers[HttpHeaders.authorizationHeader] =
+            'Basic ${base64Encode(utf8.encode('$username:$password'))}';
       }
-
-      UpdateLogger.info(
-        'Nextcloud username configured: true',
-      );
-
-      UpdateLogger.info(
-        'Nextcloud password configured: true',
-      );
-
-      // ------------------------------------------------------------
-      // AUTH
-      // ------------------------------------------------------------
-
-      final credentials =
-          base64Encode(
-        utf8.encode('$username:$password'),
-      );
 
       // ------------------------------------------------------------
       // DOWNLOAD
       // ------------------------------------------------------------
 
-      UpdateLogger.info(
-        'Starting HTTP download...',
-      );
+      UpdateLogger.info('Starting HTTP download...');
 
       final response = await _dio.download(
         downloadUri.toString(),
         filePath,
         options: Options(
-          headers: {
-            'Authorization': 'Basic $credentials',
-            'Accept': '*/*',
-            'User-Agent': 'DirigentenApp/1.0',
-          },
+          headers: {...headers},
 
           // Dio darf nur echte 2xx Antworten akzeptieren.
           validateStatus: (status) {
-            return status != null &&
-                status >= 200 &&
-                status < 300;
+            return status != null && status >= 200 && status < 300;
           },
 
           // Wichtig bei großen APKs
@@ -217,8 +164,7 @@ class DownloadService {
 
         onReceiveProgress: (received, total) {
           if (total > 0) {
-            final progress =
-                received / total;
+            final progress = received / total;
 
             progressController.add(progress);
 
@@ -228,57 +174,33 @@ class DownloadService {
               '($received / $total bytes)',
             );
           } else {
-            UpdateLogger.info(
-              'Download received: $received bytes',
-            );
+            UpdateLogger.info('Download received: $received bytes');
           }
         },
       );
 
-      UpdateLogger.info(
-        'Dio download finished.',
-      );
+      UpdateLogger.info('Dio download finished.');
 
-      UpdateLogger.info(
-        'Response status: ${response.statusCode}',
-      );
+      UpdateLogger.info('Response status: ${response.statusCode}');
 
       // ------------------------------------------------------------
       // FILE CHECK
       // ------------------------------------------------------------
 
-      final downloadedFile =
-          File(filePath);
+      final downloadedFile = File(filePath);
 
       if (!await downloadedFile.exists()) {
-        UpdateLogger.error(
-          'Download finished but file does not exist.',
-        );
-
-        progressController.addError(
-          Exception(
-            'Download abgeschlossen, Datei wurde aber nicht gefunden.',
-          ),
-        );
+        UpdateLogger.error('Download finished but file does not exist.');
 
         return null;
       }
 
-      final size =
-          await downloadedFile.length();
+      final size = await downloadedFile.length();
 
       if (size <= 0) {
-        UpdateLogger.error(
-          'Downloaded file is empty.',
-        );
+        UpdateLogger.error('Downloaded file is empty.');
 
         await downloadedFile.delete();
-
-        progressController.addError(
-          Exception(
-            'Die heruntergeladene Datei ist leer.',
-          ),
-        );
 
         return null;
       }
@@ -286,166 +208,90 @@ class DownloadService {
       // Download abgeschlossen
       progressController.add(1.0);
 
-      UpdateLogger.info(
-        'Download completed successfully.',
-      );
+      UpdateLogger.info('Download completed successfully.');
 
-      UpdateLogger.info(
-        'File size: $size bytes',
-      );
+      UpdateLogger.info('File size: $size bytes');
 
-      UpdateLogger.info(
-        'File path: $filePath',
-      );
+      UpdateLogger.info('File path: $filePath');
 
-      UpdateLogger.info(
-        'UPDATE DOWNLOAD END',
-      );
+      UpdateLogger.info('UPDATE DOWNLOAD END');
 
-      UpdateLogger.info(
-        '========================================',
-      );
+      UpdateLogger.info('========================================');
 
       return filePath;
     }
-
     // --------------------------------------------------------------
     // DIO ERROR
     // --------------------------------------------------------------
-
     on DioException catch (e) {
-      UpdateLogger.error(
-        '========================================',
-      );
+      UpdateLogger.error('========================================');
+
+      UpdateLogger.error('UPDATE DOWNLOAD FAILED');
+
+      UpdateLogger.error('Dio error type: ${e.type}');
+
+      UpdateLogger.error('Dio message: ${e.message}');
+
+      UpdateLogger.error('Dio error: ${e.error}');
 
       UpdateLogger.error(
-        'UPDATE DOWNLOAD FAILED',
+        'Request host: ${_safeUri(e.requestOptions.uri)}',
       );
-
-      UpdateLogger.error(
-        'Dio error type: ${e.type}',
-      );
-
-      UpdateLogger.error(
-        'Dio message: ${e.message}',
-      );
-
-      UpdateLogger.error(
-        'Dio error: ${e.error}',
-      );
-
-      if (e.requestOptions.uri != null) {
-        UpdateLogger.error(
-          'Request URL: ${_safeUri(e.requestOptions.uri)}',
-        );
-      }
 
       if (e.response != null) {
-        UpdateLogger.error(
-          'HTTP status: ${e.response?.statusCode}',
-        );
-
-        UpdateLogger.error(
-          'HTTP status message: ${e.response?.statusMessage}',
-        );
-
-        UpdateLogger.error(
-          'Response headers: ${e.response?.headers}',
-        );
-
-        if (e.response?.data != null) {
-          final data =
-              e.response?.data.toString() ?? '';
-
-          UpdateLogger.error(
-            'Response body: ${data.length > 1000 ? data.substring(0, 1000) : data}',
-          );
-        }
+        UpdateLogger.error('HTTP status: ${e.response?.statusCode}');
       }
 
       switch (e.response?.statusCode) {
         case 401:
-          UpdateLogger.error(
-            'HTTP 401: Nextcloud authentication failed.',
-          );
+          UpdateLogger.error('HTTP 401: Nextcloud authentication failed.');
           break;
 
         case 403:
-          UpdateLogger.error(
-            'HTTP 403: Access forbidden.',
-          );
+          UpdateLogger.error('HTTP 403: Access forbidden.');
           break;
 
         case 404:
-          UpdateLogger.error(
-            'HTTP 404: File not found.',
-          );
+          UpdateLogger.error('HTTP 404: File not found.');
           break;
 
         case 500:
-          UpdateLogger.error(
-            'HTTP 500: Nextcloud server error.',
-          );
+          UpdateLogger.error('HTTP 500: Nextcloud server error.');
           break;
 
         case 502:
-          UpdateLogger.error(
-            'HTTP 502: Bad Gateway.',
-          );
+          UpdateLogger.error('HTTP 502: Bad Gateway.');
           break;
 
         case 503:
-          UpdateLogger.error(
-            'HTTP 503: Nextcloud unavailable.',
-          );
+          UpdateLogger.error('HTTP 503: Nextcloud unavailable.');
           break;
       }
 
-      UpdateLogger.error(
-        '========================================',
-      );
-
-      progressController.addError(e);
+      UpdateLogger.error('========================================');
 
       return null;
     }
-
     // --------------------------------------------------------------
     // OTHER ERROR
     // --------------------------------------------------------------
-
     catch (e, stackTrace) {
-      UpdateLogger.error(
-        '========================================',
-      );
+      UpdateLogger.error('========================================');
 
-      UpdateLogger.error(
-        'UNEXPECTED DOWNLOAD ERROR',
-      );
+      UpdateLogger.error('UNEXPECTED DOWNLOAD ERROR');
 
-      UpdateLogger.error(
-        'Error: $e',
-      );
+      UpdateLogger.error('Error: $e');
 
-      UpdateLogger.error(
-        'StackTrace: $stackTrace',
-      );
+      UpdateLogger.error('StackTrace: $stackTrace');
 
-      UpdateLogger.error(
-        '========================================',
-      );
-
-      progressController.addError(e);
+      UpdateLogger.error('========================================');
 
       return null;
     }
   }
 
-  static String generateFileName(
-    String version,
-  ) {
-    final extension =
-        PlatformUtils.getInstallerExtension();
+  static String generateFileName(String version) {
+    final extension = PlatformUtils.getInstallerExtension();
 
     return 'app-update-$version$extension';
   }

@@ -162,7 +162,7 @@ class _ConductorPageState extends ConsumerState<ConductorPage>
   Future<void> _handleReleaseAnnounce(Map<String, dynamic> msg) async {
     UpdateLogger.info('[UPDATE] release_announce empfangen');
 
-    if (msg['app'] != AppConfig.appId) {
+    if (!AppConfig.matchesServerAppId(msg['app'])) {
       UpdateLogger.warning(
         '[UPDATE] Falsche App-ID: '
         '${msg['app']} != ${AppConfig.appId}',

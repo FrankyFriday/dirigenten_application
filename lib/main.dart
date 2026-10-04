@@ -10,7 +10,7 @@ import 'services/notification_service.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await dotenv.load(fileName: ".env");
+  await dotenv.load(fileName: "assets/.env.example");
   await notificationService.initialize();
 
   runApp(const ProviderScope(child: MyApp()));

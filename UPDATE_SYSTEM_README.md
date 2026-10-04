@@ -1,117 +1,57 @@
-# Auto-Update System für Flutter-App
+# Android release and in-app updates
 
-## Übersicht
+## Release flow
 
-Dieses professionelle Auto-Update-System ermöglicht der Flutter-App, selbstständig nach neuen Versionen zu suchen, Updates herunterzuladen und zu installieren. Es unterstützt Windows (EXE) und Android (APK) und folgt Clean Architecture Prinzipien.
+Both Android release workflows build and sign an APK, upload it to the
+Nextcloud `releases` folder, create a public read-only share link, and register
+the release with `POST https://ws.notenserver.duckdns.org/api/releases`.
+The noten-server stores the release and sends `release_announce` to connected
+clients registered for that app. On connection, clients also receive the
+currently published release.
 
-## Architektur
+The apps accept only a newer release with the expected Android package name,
+version, and signing certificate. The verified APK is opened with Android's
+package installer. Android may require the user to allow this app to install
+unknown apps in system settings.
 
-### Clean Architecture Schichten
+Actions, Octopus, and client registration retain the IDs
+`dirigenten_application` and `musiker_application`. The server emits
+`dirigenten_app` and `musiker_app` in release announcements; clients accept both
+the long and canonical IDs.
 
-1. **Presentation Layer**: UI-Komponenten (UpdateDialog, Progress-Indikatoren)
-2. **Domain Layer**: Business Logic (UpdateService, VersionChecker, DownloadService)
-3. **Data Layer**: Datenquellen (UpdateRepository)
+## Publishing a release
 
-### State Management
+- Push a `vX.Y.Z` tag, or run **Android Release** manually and enter `X.Y.Z`.
+- The Nextcloud account must be able to upload files and create public shares.
+  Public link sharing must be enabled. The APK URL is not published to the
+  server until Nextcloud returns a valid HTTPS share link.
+- Configure these GitHub Actions secrets in **both** app repositories:
+  `KEYSTORE_BASE64`, `KEYSTORE_PASSWORD`, `KEY_PASSWORD`, `KEY_ALIAS`,
+  `NC_USER`, `NC_PASS`, and `NOTEN_SERVER_API_KEY`.
+  `NOTEN_SERVER_API_KEY` must match the `API_KEY` configured on the running
+  noten-server. Existing Octopus deployment also requires `OCTOPUS_API_KEY`
+  and `OCTOPUS_SPACE`.
+- `KEYSTORE_BASE64` must contain the base64-encoded JKS used to sign the
+  already-installed version of that app. Keep the keystore and passwords
+  backed up securely; changing the signing key prevents Android from installing
+  an update over existing installations.
 
-- **Riverpod**: Für Dependency Injection und State Management
-- **Streams**: Für Download-Progress-Updates
+The workflow validates all required signing secrets, decodes and verifies the
+keystore alias, and fails before building if the keystore or its properties
+are missing. The keystore and `key.properties` are generated only in the CI
+workspace and are not included in the APK. The bundled
+`assets/.env.example` contains only the public Nextcloud base URL; download
+credentials are not required for public APK shares and must not be embedded in
+the app.
 
-## Komponenten
+## Troubleshooting
 
-### Models
-- `UpdateInfo`: DTO für Update-Informationen aus update.json
-
-### Services
-- `UpdateService`: Koordiniert Update-Prozesse
-- `VersionChecker`: Vergleicht semantische Versionen
-- `DownloadService`: Handhabt Downloads mit Progress-Tracking
-
-### Repositories
-- `UpdateRepository`: Fetcht Update-Info vom Server
-
-### UI
-- `UpdateDialog`: Zeigt Update-Info und Download-Progress
-
-### Utils
-- `UpdateLogger`: Logging-System
-- `PlatformUtils`: Plattform-spezifische Hilfsfunktionen
-
-## Update Flow
-
-1. **App Start**: SplashScreen checkt für Updates
-2. **Fetch update.json**: Repository lädt Update-Info
-3. **Version Vergleich**: VersionChecker prüft ob neue Version verfügbar
-4. **Update Dialog**: Zeigt Update-Info an
-5. **Download**: DownloadService lädt mit Progress-Tracking
-6. **Installation**: open_file öffnet Installer
-
-## update.json Format
-
-```json
-{
-  "version": "1.0.4",
-  "mandatory": false,
-  "notes": "Bugfixes",
-  "url": "https://server/app-1.0.4.exe"
-}
-```
-
-## Plattform-spezifische Flows
-
-### Windows
-- Download: EXE-Datei in Downloads-Ordner
-- Installation: open_file startet EXE (Installer übernimmt)
-
-### Android
-- Download: APK-Datei in Downloads-Ordner
-- Installation: open_file öffnet APK für Installation
-
-## Sicherheit
-
-- **Validierung**: JSON-Schema Validierung für update.json
-- **Hash-Verifikation**: (Empfohlen für Produktion) SHA256-Hash-Prüfung
-- **HTTPS**: Nur sichere Verbindungen
-- **Permissions**: Minimale Berechtigungen
-
-## Fehlerbehandlung
-
-- **Retry-Mechanismus**: Exponential Backoff für Netzwerkfehler
-- **Fallback**: Bei Download-Fehlern wird lokaler Fallback verwendet
-- **Logging**: Umfassendes Logging für Debugging
-
-## Best Practices
-
-1. **Semantische Versionierung**: Verwende Major.Minor.Patch Format
-2. **Mandatory Updates**: Erzwinge kritische Updates
-3. **User Experience**: Zeige Progress und erlaube Abbruch
-4. **Testing**: Teste alle Flows auf Zielplattformen
-5. **Monitoring**: Logge Update-Adoption und Fehler
-
-## Konfiguration
-
-### Provider Setup
-
-```dart
-final updateUrlProvider = Provider<String>((ref) => 'https://your-server.com/update.json');
-```
-
-### Integration in App
-
-Das System ist in `main.dart` integriert und checkt beim App-Start automatisch für Updates.
-
-## Abhängigkeiten
-
-- `dio`: HTTP-Client für Downloads
-- `package_info_plus`: App-Version abrufen
-- `path_provider`: Datei-Pfade
-- `open_filex`: Dateien öffnen/installieren
-- `flutter_riverpod`: State Management
-- `version`: Semantische Versionierung
-
-## Erweiterungen
-
-- **Delta Updates**: Nur geänderte Dateien herunterladen
-- **Background Updates**: Updates im Hintergrund herunterladen
-- **A/B Testing**: Verschiedene Update-Strategien testen
-- **Analytics**: Update-Adoption tracken
+- **Signing setup fails:** verify the four keystore secrets and ensure
+  `KEYSTORE_BASE64` is one-line base64 for the original production keystore.
+- **Share creation fails:** verify the Nextcloud account has upload/share
+  permissions and public-link sharing is enabled.
+- **Release registration fails:** verify the `NOTEN_SERVER_API_KEY` Actions
+  secret matches the server's configured API key and that the server endpoint
+  is reachable.
+- **The app rejects an APK:** check that the uploaded APK has the expected
+  package ID and version and was signed with the original app keystore.

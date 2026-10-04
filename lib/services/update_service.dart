@@ -22,11 +22,9 @@ class UpdateService {
     UpdateLogger.info('========================================');
     UpdateLogger.info('UPDATE DOWNLOAD REQUEST');
     UpdateLogger.info('Server-Version: ${updateInfo.version}');
-    UpdateLogger.info('APK-URL: ${updateInfo.url}');
 
     try {
-      final fileName =
-          DownloadService.generateFileName(updateInfo.version);
+      final fileName = DownloadService.generateFileName(updateInfo.version);
 
       UpdateLogger.info('Generierter Dateiname: $fileName');
       UpdateLogger.info('Starte Download...');
@@ -78,14 +76,10 @@ class UpdateService {
 
       final fileSize = await file.length();
 
-      UpdateLogger.info(
-        'APK Größe: $fileSize Bytes',
-      );
+      UpdateLogger.info('APK Größe: $fileSize Bytes');
 
       if (fileSize <= 0) {
-        UpdateLogger.error(
-          'APK ist leer!',
-        );
+        UpdateLogger.error('APK ist leer!');
 
         UpdateLogger.info('UPDATE DOWNLOAD FAILED');
         UpdateLogger.info('========================================');
@@ -103,33 +97,25 @@ class UpdateService {
       UpdateLogger.info('SIGNATURE CHECK');
       UpdateLogger.info('Lese Signatur der installierten App...');
 
-      final installedSignature =
-          await SignatureService.getInstalledSignature();
+      final installedSignature = await SignatureService.getInstalledSignature();
 
       if (installedSignature == null) {
         UpdateLogger.error(
           'Installierte App-Signatur konnte nicht gelesen werden.',
         );
       } else {
-        UpdateLogger.info(
-          'Installierte App Signatur:',
-        );
+        UpdateLogger.info('Installierte App Signatur:');
 
-        UpdateLogger.info(
-          installedSignature,
-        );
+        UpdateLogger.info(installedSignature);
       }
 
       // ------------------------------------------------------------
       // SIGNATUR DER HERUNTERGELADENEN APK AUSLESEN
       // ------------------------------------------------------------
 
-      UpdateLogger.info(
-        'Lese Signatur der heruntergeladenen APK...',
-      );
+      UpdateLogger.info('Lese Signatur der heruntergeladenen APK...');
 
-      final apkInfo =
-          await SignatureService.getApkSignature(filePath);
+      final apkInfo = await SignatureService.getApkSignature(filePath);
 
       if (apkInfo == null) {
         UpdateLogger.error(
@@ -142,30 +128,19 @@ class UpdateService {
         return null;
       }
 
-      final apkPackageName =
-          apkInfo['packageName'];
+      final apkPackageName = apkInfo['packageName'];
 
-      final apkVersion =
-          apkInfo['versionName'];
+      final apkVersion = apkInfo['versionName'];
 
-      final apkSignature =
-          apkInfo['signature'];
+      final apkSignature = apkInfo['signature'];
 
-      UpdateLogger.info(
-        'APK Package: $apkPackageName',
-      );
+      UpdateLogger.info('APK Package: $apkPackageName');
 
-      UpdateLogger.info(
-        'APK Version: $apkVersion',
-      );
+      UpdateLogger.info('APK Version: $apkVersion');
 
-      UpdateLogger.info(
-        'APK Signatur:',
-      );
+      UpdateLogger.info('APK Signatur:');
 
-      UpdateLogger.info(
-        '$apkSignature',
-      );
+      UpdateLogger.info('$apkSignature');
 
       // ------------------------------------------------------------
       // PACKAGE NAME PRÜFEN
@@ -173,21 +148,14 @@ class UpdateService {
 
       UpdateLogger.info('Prüfe Package Name...');
 
-      const expectedPackage =
-          'com.example.dirigenten_application';
+      const expectedPackage = 'com.example.dirigenten_application';
 
       if (apkPackageName != expectedPackage) {
-        UpdateLogger.error(
-          '❌ PACKAGE NAME FALSCH!',
-        );
+        UpdateLogger.error('❌ PACKAGE NAME FALSCH!');
 
-        UpdateLogger.error(
-          'Erwartet: $expectedPackage',
-        );
+        UpdateLogger.error('Erwartet: $expectedPackage');
 
-        UpdateLogger.error(
-          'APK: $apkPackageName',
-        );
+        UpdateLogger.error('APK: $apkPackageName');
 
         UpdateLogger.info('UPDATE DOWNLOAD FAILED');
         UpdateLogger.info('========================================');
@@ -195,9 +163,7 @@ class UpdateService {
         return null;
       }
 
-      UpdateLogger.info(
-        '✅ PACKAGE NAME OK',
-      );
+      UpdateLogger.info('✅ PACKAGE NAME OK');
 
       // Die APK muss exakt die Version tragen, die der Server angekündigt hat.
       if (apkVersion != updateInfo.version) {
@@ -218,15 +184,10 @@ class UpdateService {
       // SIGNATUR VERGLEICHEN
       // ------------------------------------------------------------
 
-      UpdateLogger.info(
-        'Vergleiche Signaturen...',
-      );
+      UpdateLogger.info('Vergleiche Signaturen...');
 
-      if (installedSignature == null ||
-          apkSignature == null) {
-        UpdateLogger.error(
-          '❌ SIGNATURE CHECK NICHT MÖGLICH',
-        );
+      if (installedSignature == null || apkSignature == null) {
+        UpdateLogger.error('❌ SIGNATURE CHECK NICHT MÖGLICH');
 
         UpdateLogger.info('UPDATE DOWNLOAD FAILED');
         UpdateLogger.info('========================================');
@@ -235,42 +196,26 @@ class UpdateService {
       }
 
       if (installedSignature == apkSignature) {
-        UpdateLogger.info(
-          '✅ SIGNATURE MATCH',
-        );
+        UpdateLogger.info('✅ SIGNATURE MATCH');
 
-        UpdateLogger.info(
-          'Die APK wurde mit demselben Keystore signiert.',
-        );
+        UpdateLogger.info('Die APK wurde mit demselben Keystore signiert.');
 
-        UpdateLogger.info(
-          'Android sollte die APK als Update akzeptieren.',
-        );
+        UpdateLogger.info('Android sollte die APK als Update akzeptieren.');
       } else {
-        UpdateLogger.error(
-          '❌ SIGNATURE MISMATCH',
-        );
+        UpdateLogger.error('❌ SIGNATURE MISMATCH');
 
         UpdateLogger.error(
           'Die heruntergeladene APK wurde mit einem anderen '
           'Keystore signiert!',
         );
 
-        UpdateLogger.error(
-          'Installierte App:',
-        );
+        UpdateLogger.error('Installierte App:');
 
-        UpdateLogger.error(
-          installedSignature,
-        );
+        UpdateLogger.error(installedSignature);
 
-        UpdateLogger.error(
-          'Heruntergeladene APK:',
-        );
+        UpdateLogger.error('Heruntergeladene APK:');
 
-        UpdateLogger.error(
-          '$apkSignature',
-        );
+        UpdateLogger.error('$apkSignature');
 
         UpdateLogger.info('UPDATE DOWNLOAD FAILED');
         UpdateLogger.info('========================================');
@@ -278,37 +223,21 @@ class UpdateService {
         return null;
       }
 
-      UpdateLogger.info(
-        '========================================',
-      );
+      UpdateLogger.info('========================================');
 
-      UpdateLogger.info(
-        'UPDATE DOWNLOAD SUCCESS',
-      );
+      UpdateLogger.info('UPDATE DOWNLOAD SUCCESS');
 
-      UpdateLogger.info(
-        'APK ist bereit für Installation.',
-      );
+      UpdateLogger.info('APK ist bereit für Installation.');
 
-      UpdateLogger.info(
-        '========================================',
-      );
+      UpdateLogger.info('========================================');
 
       return filePath;
-
     } catch (e) {
-      UpdateLogger.error(
-        'Fehler beim Update-Download',
-        e,
-      );
+      UpdateLogger.error('Fehler beim Update-Download', e);
 
-      UpdateLogger.info(
-        'UPDATE DOWNLOAD FAILED',
-      );
+      UpdateLogger.info('UPDATE DOWNLOAD FAILED');
 
-      UpdateLogger.info(
-        '========================================',
-      );
+      UpdateLogger.info('========================================');
 
       return null;
     }

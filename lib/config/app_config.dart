@@ -7,9 +7,13 @@ class AppConfig {
   /// (`{"type":"register","app":...}`) an den Server geschickt wird und die
   /// der Server auch im `release_announce` (`msg['app']`) verwendet.
   ///
-  /// Muss mit dem `app`-Wert übereinstimmen, den z. B. Octopus beim
-  /// `POST /api/releases` sendet (siehe Deployment-Fluss im Server-README).
+  /// Der Server normalisiert diese ID beim Registrieren und in
+  /// `release_announce` auf `dirigenten_app`.
   static const String appId = 'dirigenten_application';
+  static const String canonicalServerAppId = 'dirigenten_app';
+
+  static bool matchesServerAppId(Object? value) =>
+      value == appId || value == canonicalServerAppId;
 
   /// Domain des noten-server v2 WebSocket-Endpunkts (`wss://$wsDomain`).
   static const String wsDomain = 'ws.notenserver.duckdns.org';

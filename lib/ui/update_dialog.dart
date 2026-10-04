@@ -1,7 +1,9 @@
 import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:open_filex/open_filex.dart';
+
 import '../models/update_info.dart';
 import '../providers/update_providers.dart';
 import '../services/update_service.dart';
@@ -16,7 +18,7 @@ class UpdateDialog extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final downloadProgress = ref.watch(downloadProgressProvider);
-    final isDownloading = downloadProgress > 0 && downloadProgress < 1;
+    final isDownloading = ref.watch(downloadInProgressProvider);
 
     return AlertDialog(
       title: const Text('Update verfügbar'),
@@ -44,7 +46,7 @@ class UpdateDialog extends ConsumerWidget {
         ],
       ),
       actions: [
-        if (!updateInfo.mandatory)
+        if (!updateInfo.mandatory && !isDownloading)
           TextButton(
             onPressed: () => Navigator.of(context).pop(false),
             child: const Text('Später'),
@@ -58,49 +60,64 @@ class UpdateDialog extends ConsumerWidget {
   }
 
   Future<void> _startDownload(BuildContext context, WidgetRef ref) async {
+    if (ref.read(downloadInProgressProvider)) return;
+
+    final downloadingNotifier = ref.read(downloadInProgressProvider.notifier);
+    final progressNotifier = ref.read(downloadProgressProvider.notifier);
+    downloadingNotifier.state = true;
+    final progressController = StreamController<double>();
+    final subscription = progressController.stream.listen(
+      progressNotifier.updateProgress,
+      onError: (Object error, StackTrace stackTrace) {
+        UpdateLogger.error(
+          'Download-Fortschritt konnte nicht gelesen werden',
+          error,
+          stackTrace,
+        );
+      },
+    );
+
     try {
       final updateService = ref.read(updateServiceProvider);
-      final progressNotifier = ref.read(downloadProgressProvider.notifier);
-
-      // Create progress stream
-      final progressController = StreamController<double>();
-      progressController.stream.listen((progress) {
-        progressNotifier.updateProgress(progress);
-      });
 
       final filePath = await UpdateService.retry(
-        () => updateService.downloadUpdate(updateInfo, progressController),
-        3, // max retries
-        const Duration(seconds: 2), // initial delay
+        () async {
+          final path = await updateService.downloadUpdate(
+            updateInfo,
+            progressController,
+          );
+          if (path == null) {
+            throw StateError(
+              'Update konnte nicht heruntergeladen oder verifiziert werden.',
+            );
+          }
+          return path;
+        },
+        3,
+        const Duration(seconds: 2),
       );
 
-      if (filePath != null) {
-        UpdateLogger.info('Download completed: $filePath');
-        if (!context.mounted) return;
-        // Open the installer
-        await _openInstaller(context, filePath);
-        // Close dialog and potentially restart app
-        if (context.mounted) {
-          Navigator.of(context).pop(true);
-        }
-      } else {
-        if (context.mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Download fehlgeschlagen')),
-          );
-        }
+      UpdateLogger.info('Download completed: $filePath');
+      if (!context.mounted) return;
+      final opened = await _openInstaller(context, filePath);
+      if (opened && context.mounted) {
+        Navigator.of(context).pop(true);
       }
     } catch (e) {
       UpdateLogger.error('Download error', e);
       if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Fehler: $e')),
-        );
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('Update fehlgeschlagen: $e')));
       }
+    } finally {
+      await subscription.cancel();
+      await progressController.close();
+      progressNotifier.reset();
+      downloadingNotifier.state = false;
     }
   }
 
-  Future<void> _openInstaller(BuildContext context, String filePath) async {
+  Future<bool> _openInstaller(BuildContext context, String filePath) async {
     try {
       final result = await OpenFilex.open(filePath);
       if (result.type != ResultType.done) {
@@ -108,13 +125,16 @@ class UpdateDialog extends ConsumerWidget {
         if (context.mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-                content: Text(
-                    'Installer konnte nicht geöffnet werden: ${result.message}')),
+              content: Text(
+                'Installer konnte nicht geöffnet werden: ${result.message}',
+              ),
+            ),
           );
         }
+        return false;
       } else {
         UpdateLogger.info('Installer opened successfully');
-        // On successful open, the app may be closed or restarted by the installer
+        return true;
       }
     } catch (e) {
       UpdateLogger.error('Error opening installer', e);
@@ -123,6 +143,7 @@ class UpdateDialog extends ConsumerWidget {
           SnackBar(content: Text('Fehler beim Öffnen des Installers: $e')),
         );
       }
+      return false;
     }
   }
 }

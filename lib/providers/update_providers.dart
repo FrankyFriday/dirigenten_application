@@ -1,5 +1,6 @@
 import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+
 import '../services/download_service.dart';
 import '../services/update_service.dart';
 
@@ -21,9 +22,12 @@ final updateServiceProvider = Provider<UpdateService>((ref) {
 });
 
 // State for download progress
-final downloadProgressProvider = StateNotifierProvider<DownloadProgressNotifier, double>((ref) {
-  return DownloadProgressNotifier();
-});
+final downloadProgressProvider =
+    StateNotifierProvider<DownloadProgressNotifier, double>((ref) {
+      return DownloadProgressNotifier();
+    });
+
+final downloadInProgressProvider = StateProvider<bool>((ref) => false);
 
 class DownloadProgressNotifier extends StateNotifier<double> {
   DownloadProgressNotifier() : super(0.0);
