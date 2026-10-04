@@ -90,6 +90,9 @@ jobs:
             '[.Steps[] | select(.Name == "Notify Server")] | length' \
             <<< "$process")"
           if [[ "$notify_step_count" != "1" ]]; then
+            jq -r \
+              '.Steps[] | "Step: \(.Name)", (.Actions[]? | "  Action: \(.Name) [\(.ActionType // "unknown")]")' \
+              <<< "$process"
             echo "::error::Expected one Notify Server step in Octopus project $PROJECT; found $notify_step_count."
             exit 1
           fi
