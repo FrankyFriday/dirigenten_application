@@ -122,10 +122,80 @@ jobs:
         with:
           version: latest
 
+      - name: Recreate release with the updated Production variable snapshot
+        if: inputs.deploy
+        shell: bash
+        run: |
+          set -euo pipefail
+          api_get() {
+            curl --fail --silent --show-error \
+              -H "X-Octopus-ApiKey: $OCTOPUS_API_KEY" \
+              -H 'Accept: application/json' "$1"
+          }
+
+          spaces="$(api_get "$OCTOPUS_URL/api/spaces/all")"
+          space_id="$(jq -er --arg value "$OCTOPUS_SPACE" \
+            '.[] | select(.Id == $value or .Name == $value) | .Id' \
+            <<< "$spaces" | head -n 1)"
+          projects="$(api_get "$OCTOPUS_URL/api/$space_id/projects/all")"
+          project="$(jq -cer \
+            '.[] | select(.Name == "dirigenten_application")' \
+            <<< "$projects")"
+          project_id="$(jq -er '.Id' <<< "$project")"
+          releases="$(api_get "$OCTOPUS_URL/api/$space_id/projects/$project_id/releases")"
+          old_release="$(jq -cer --arg version "$VERSION" \
+            '[if type == "array" then .[] else .Items[]? end | select(.Version == $version)]' \
+            <<< "$releases")"
+          release_count="$(jq -er 'length' <<< "$old_release")"
+          if [[ "$release_count" != "1" ]]; then
+            echo "::error::Expected exactly one existing Octopus release $VERSION; found $release_count."
+            exit 1
+          fi
+
+          old_release_id="$(jq -er '.[0].Id' <<< "$old_release")"
+          old_channel_id="$(jq -er '.[0].ChannelId' <<< "$old_release")"
+          old_snapshot_id="$(jq -er '.[0].ProjectVariableSetSnapshotId' <<< "$old_release")"
+          package_count="$(jq -er '.[0].SelectedPackages // [] | length' <<< "$old_release")"
+          git_resource_count="$(jq -er '.[0].SelectedGitResources // [] | length' <<< "$old_release")"
+          if [[ "$package_count" != "0" || "$git_resource_count" != "0" ]]; then
+            echo "::error::Release $VERSION has package or Git-resource selections; refusing to recreate it automatically."
+            exit 1
+          fi
+
+          octopus release delete \
+            --project "$project_id" \
+            --version "$VERSION" \
+            --no-prompt
+          octopus release create \
+            --project "$project_id" \
+            --channel "$old_channel_id" \
+            --version "$VERSION" \
+            --ignore-channel-rules \
+            --no-prompt
+
+          refreshed_releases="$(api_get "$OCTOPUS_URL/api/$space_id/projects/$project_id/releases")"
+          new_release="$(jq -cer --arg version "$VERSION" \
+            '[if type == "array" then .[] else .Items[]? end | select(.Version == $version)]' \
+            <<< "$refreshed_releases")"
+          if [[ "$(jq -er 'length' <<< "$new_release")" != "1" ]]; then
+            echo "::error::Could not verify the recreated release $VERSION."
+            exit 1
+          fi
+          new_release_id="$(jq -er '.[0].Id' <<< "$new_release")"
+          new_snapshot_id="$(jq -er '.[0].ProjectVariableSetSnapshotId' <<< "$new_release")"
+          if [[ "$new_release_id" == "$old_release_id" || "$new_snapshot_id" == "$old_snapshot_id" ]]; then
+            echo "::error::Octopus did not create a fresh release variable snapshot."
+            exit 1
+          fi
+          echo "Recreated release $VERSION with a new project-variable snapshot."
+
       - name: Redeploy conductor release to Production
         if: inputs.deploy
         run: |
           octopus release deploy \
             --project "dirigenten_application" \
             --version "$VERSION" \
-            --environment "Production"
+            --environment "Production" \
+            --no-prompt \
+            --output-format basic \
+            | octopus task wait
