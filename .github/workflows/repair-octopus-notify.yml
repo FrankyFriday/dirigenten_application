@@ -48,7 +48,7 @@ jobs:
       CHANNEL_ID: ${{ inputs.channel_id }}
 
     steps:
-      - name: Patch the Notify Server release-version variable
+      - name: Repair project release-version variables
         shell: bash
         run: |
           set -euo pipefail
@@ -86,30 +86,12 @@ jobs:
             echo "::error::Octopus returned an unexpected deployment-process shape (keys: $response_keys; Steps type: $steps_type)."
             exit 1
           fi
-          notify_step_count="$(jq -er \
-            '[.Steps[] | select(.Name == "Notify Server")] | length' \
-            <<< "$process")"
-          if [[ "$notify_step_count" != "1" ]]; then
-            jq -r \
-              '.Steps[] | "Step: \(.Name)", (.Actions[]? | "  Action: \(.Name) [\(.ActionType // "unknown")]")' \
-              <<< "$process"
-            echo "::error::Expected one Notify Server step in Octopus project $PROJECT; found $notify_step_count."
-            exit 1
-          fi
           old_count="$(jq -er \
-            '[.Steps[] | select(.Name == "Notify Server") | .Actions[] | .. | strings | select(contains("#{Release.Version}"))] | length' \
+            '[.Steps[].Actions[] | .. | strings | select(contains("#{Release.Version}"))] | length' \
             <<< "$process")"
-          correct_count="$(jq -er \
-            '[.Steps[] | select(.Name == "Notify Server") | .Actions[] | .. | strings | select(contains("#{Octopus.Release.Number}"))] | length' \
-            <<< "$process")"
-          if [[ "$old_count" == "0" && "$correct_count" == "0" ]]; then
-            echo "::error::The Notify Server step contains neither the failed nor the expected release-version token."
-            exit 1
-          fi
-
           if [[ "$old_count" != "0" ]]; then
-            patched="$(jq --arg step "Notify Server" \
-              '(.Steps[] | select(.Name == $step) | .Actions[]) |= walk(if type == "string" then gsub("#\\{Release\\.Version\\}"; "#{Octopus.Release.Number}") else . end)' \
+            patched="$(jq \
+              '(.Steps[].Actions[]) |= walk(if type == "string" then gsub("#\\{Release\\.Version\\}"; "#{Octopus.Release.Number}") else . end)' \
               <<< "$process")"
             curl --fail --silent --show-error \
               -X PUT \
@@ -118,29 +100,37 @@ jobs:
               --data-binary "$patched" \
               -o /dev/null "$process_url"
           else
-            echo "The current Notify Server process already uses Octopus.Release.Number."
+            echo "No unresolved Octopus Release.Version token was found."
           fi
 
           verified="$(api_get "$process_url")"
           remaining="$(jq -er \
-            '[.Steps[] | select(.Name == "Notify Server") | .Actions[] | .. | strings | select(contains("#{Release.Version}"))] | length' \
+            '[.Steps[].Actions[] | .. | strings | select(contains("#{Release.Version}"))] | length' \
             <<< "$verified")"
           if [[ "$remaining" != "0" ]]; then
             echo "::error::Octopus process still contains the unresolved token."
             exit 1
           fi
-          echo "Verified the Notify Server version token in the $PROJECT Production process."
+          echo "Verified the release-version token in the $PROJECT Production process."
           variable_set_id="$(jq -er '.VariableSetId' <<< "$project")"
           variables="$(api_get "$OCTOPUS_URL/api/$space_id/variables/$variable_set_id")"
           echo "Relevant Octopus project variable names/scopes (values intentionally withheld):"
           jq -r \
             '.Variables[]? | select(.Name | test("noten|server|api|key|apkurl"; "i")) | [.Name, (.IsSensitive // false | tostring), ((.Scope.Environment // []) | join(","))] | @tsv' \
             <<< "$variables"
-          echo "Notify Server action variable references:"
+          echo "Deployment action variable references:"
           jq -r \
-            '[.Steps[] | select(.Name == "Notify Server") | .Actions[] | .Properties[]? | strings | scan("#\\{[^}]+\\}")] | unique | .[]' \
+            '[.Steps[].Actions[] | .Properties[]? | strings | scan("#\\{[^}]+\\}")] | unique | .[]' \
             <<< "$verified"
-          echo "Project default release channel: $(jq -r '.DefaultChannelId // "none"' <<< "$project")"
+          jq -r '.Steps[] | "Step: \(.Name)", (.Actions[]? | "  Action: \(.Name) [\(.ActionType // "unknown")]")' <<< "$verified"
+          default_channel_id="$(jq -r '.DefaultChannelId // empty' <<< "$project")"
+          if [[ -n "$default_channel_id" ]]; then
+            channel="$(api_get "$OCTOPUS_URL/api/$space_id/channels/$default_channel_id")"
+            echo "Project default release channel: $(jq -r '.Name' <<< "$channel")"
+            echo "Project default release channel ID: $default_channel_id"
+          else
+            echo "Project has no default release channel."
+          fi
 
       - name: Install Octopus CLI
         if: inputs.deploy
