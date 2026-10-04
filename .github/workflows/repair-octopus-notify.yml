@@ -9,20 +9,28 @@ on:
         type: boolean
         default: false
       version:
-        description: Existing conductor release version to redeploy
+        description: Release version to deploy
         required: true
         type: string
-        default: "1.0.35"
+        default: "1.0.11"
+      project:
+        description: Octopus project whose release should be repaired
+        required: true
+        type: choice
+        options:
+          - dirigenten_application
+          - musiker_application
+        default: musiker_application
       deploy:
         description: Start the Production deployment after repairing the process
         required: true
         type: boolean
         default: true
       channel_id:
-        description: Existing Octopus channel ID to use if the release must be recreated
-        required: true
+        description: Octopus channel ID (leave empty to use the project's default channel)
+        required: false
         type: string
-        default: Channels-41
+        default: ""
 
 permissions:
   contents: read
@@ -35,6 +43,7 @@ jobs:
       OCTOPUS_API_KEY: ${{ secrets.OCTOPUS_API_KEY }}
       OCTOPUS_SPACE: ${{ secrets.OCTOPUS_SPACE }}
       VERSION: ${{ inputs.version }}
+      PROJECT: ${{ inputs.project }}
       CONFIRM: ${{ inputs.confirm }}
       CHANNEL_ID: ${{ inputs.channel_id }}
 
@@ -65,8 +74,8 @@ jobs:
             '.[] | select(.Id == $value or .Name == $value) | .Id' \
             <<< "$spaces" | head -n 1)"
           projects="$(api_get "$OCTOPUS_URL/api/$space_id/projects/all")"
-          project="$(jq -cer \
-            '.[] | select(.Name == "dirigenten_application")' \
+          project="$(jq -cer --arg name "$PROJECT" \
+            '.[] | select(.Name == $name)' \
             <<< "$projects")"
           process_id="$(jq -er '.DeploymentProcessId' <<< "$project")"
           process_url="$OCTOPUS_URL/api/$space_id/deploymentprocesses/$process_id"
@@ -75,6 +84,13 @@ jobs:
             response_keys="$(jq -r 'keys | join(", ")' <<< "$process")"
             steps_type="$(jq -r '.Steps | type' <<< "$process")"
             echo "::error::Octopus returned an unexpected deployment-process shape (keys: $response_keys; Steps type: $steps_type)."
+            exit 1
+          fi
+          notify_step_count="$(jq -er \
+            '[.Steps[] | select(.Name == "Notify Server")] | length' \
+            <<< "$process")"
+          if [[ "$notify_step_count" != "1" ]]; then
+            echo "::error::Expected one Notify Server step in Octopus project $PROJECT; found $notify_step_count."
             exit 1
           fi
           old_count="$(jq -er \
@@ -110,17 +126,18 @@ jobs:
             echo "::error::Octopus process still contains the unresolved token."
             exit 1
           fi
-          echo "Verified the Notify Server version token in the conductor Production process."
+          echo "Verified the Notify Server version token in the $PROJECT Production process."
           variable_set_id="$(jq -er '.VariableSetId' <<< "$project")"
           variables="$(api_get "$OCTOPUS_URL/api/$space_id/variables/$variable_set_id")"
-          echo "Matching Octopus project variable names (values intentionally withheld):"
+          echo "Relevant Octopus project variable names/scopes (values intentionally withheld):"
           jq -r \
-            '.Variables[]? | select(.Name | test("noten|server|api|key"; "i")) | [.Name, (.IsSensitive // false | tostring)] | @tsv' \
+            '.Variables[]? | select(.Name | test("noten|server|api|key|apkurl"; "i")) | [.Name, (.IsSensitive // false | tostring), ((.Scope.Environment // []) | join(","))] | @tsv' \
             <<< "$variables"
           echo "Notify Server action variable references:"
           jq -r \
             '[.Steps[] | select(.Name == "Notify Server") | .Actions[] | .Properties[]? | strings | scan("#\\{[^}]+\\}")] | unique | .[]' \
             <<< "$verified"
+          echo "Project default release channel: $(jq -r '.DefaultChannelId // "none"' <<< "$project")"
 
       - name: Install Octopus CLI
         if: inputs.deploy
@@ -144,8 +161,8 @@ jobs:
             '.[] | select(.Id == $value or .Name == $value) | .Id' \
             <<< "$spaces" | head -n 1)"
           projects="$(api_get "$OCTOPUS_URL/api/$space_id/projects/all")"
-          project="$(jq -cer \
-            '.[] | select(.Name == "dirigenten_application")' \
+          project="$(jq -cer --arg name "$PROJECT" \
+            '.[] | select(.Name == $name)' \
             <<< "$projects")"
           project_id="$(jq -er '.Id' <<< "$project")"
           releases="$(api_get "$OCTOPUS_URL/api/$space_id/projects/$project_id/releases")"
@@ -160,6 +177,9 @@ jobs:
 
           old_release_id=""
           old_snapshot_id=""
+          if [[ -z "$CHANNEL_ID" ]]; then
+            CHANNEL_ID="$(jq -er '.DefaultChannelId' <<< "$project")"
+          fi
           if [[ "$release_count" == "1" ]]; then
             old_release_id="$(jq -er '.[0].Id' <<< "$old_release")"
             CHANNEL_ID="$(jq -er '.[0].ChannelId' <<< "$old_release")"
@@ -207,7 +227,7 @@ jobs:
         if: inputs.deploy
         run: |
           octopus release deploy \
-            --project "dirigenten_application" \
+            --project "$PROJECT" \
             --version "$VERSION" \
             --environment "Production" \
             --no-prompt \
