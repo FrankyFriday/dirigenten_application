@@ -90,6 +90,12 @@ damit die Production-Variable `ApkUrl`, sodass die Update-Ankündigung auf
 genau die gebaute APK-Version zeigt. Der Workflow kann über einen Tag `vX.Y.Z`
 oder manuell mit einer Version im Format `X.Y.Z` gestartet werden.
 
+Die App unterstützt Android ab API 24; das Galaxy J6 mit Android 10 ist
+kompatibel. Für In-App-Updates muss Android Marschpad erlauben, Apps aus dieser
+Quelle zu installieren. Fehlt diese Freigabe, öffnet die App vor dem Download
+die passende Systemeinstellung. Freigabe aktivieren, zur App zurückkehren und
+erneut auf **Herunterladen** tippen.
+
 Im GitHub-Repository müssen die Actions-Secrets `KEYSTORE_BASE64`,
 `KEYSTORE_PASSWORD`, `KEY_PASSWORD`, `KEY_ALIAS`, `NC_USER`, `NC_PASS`,
 `OCTOPUS_API_KEY` und `OCTOPUS_SPACE` vorhanden sein. Der Workflow dekodiert
