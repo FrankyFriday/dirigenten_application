@@ -107,8 +107,9 @@ class UpdateDialog extends ConsumerWidget {
             progressController,
           );
           if (path == null) {
-            throw StateError(
-              'Update konnte nicht heruntergeladen oder verifiziert werden.',
+            throw const UpdateDownloadException(
+              'Die APK konnte nicht geladen oder anhand von Version und '
+              'Signatur bestätigt werden.',
             );
           }
           return path;

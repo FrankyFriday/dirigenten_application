@@ -53,7 +53,9 @@ der Musiker-App abgestimmt werden.
 
 Der Workflow **Android Release** in GitHub Actions baut ein signiertes APK,
 prüft Version und Signatur, lädt das APK zu Nextcloud hoch und erstellt einen
-Octopus-Release für `dirigenten_application`. Er kann über einen Tag `vX.Y.Z`
+öffentlichen Nur-Lese-Downloadlink. Vor dem Octopus-Release aktualisiert er
+damit die Production-Variable `ApkUrl`, sodass die Update-Ankündigung auf
+genau die gebaute APK-Version zeigt. Der Workflow kann über einen Tag `vX.Y.Z`
 oder manuell mit einer Version im Format `X.Y.Z` gestartet werden.
 
 Im GitHub-Repository müssen die Actions-Secrets `KEYSTORE_BASE64`,

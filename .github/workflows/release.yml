@@ -136,10 +136,90 @@ jobs:
           curl --fail --silent --show-error --user "$NC_USER:$NC_PASS" \
             --upload-file "$APK" "$DAV_ROOT/releases/$APK"
 
+      - name: Create and verify public APK download
+        id: apk_share
+        env:
+          NC_USER: ${{ secrets.NC_USER }}
+          NC_PASS: ${{ secrets.NC_PASS }}
+          VERSION: ${{ steps.release.outputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK="dirigenten_application-$VERSION.apk"
+          SHARE_RESPONSE="$(curl --fail --silent --show-error --user "$NC_USER:$NC_PASS" \
+            -H 'OCS-APIRequest: true' \
+            -H 'Accept: application/json' \
+            --data-urlencode "path=/releases/$APK" \
+            --data-urlencode 'shareType=3' \
+            --data-urlencode 'permissions=1' \
+            'https://cloud.notenserver.duckdns.org/ocs/v2.php/apps/files_sharing/api/v1/shares?format=json')"
+          if ! jq -e '.ocs.meta.statuscode == 200 and (.ocs.data.url | type == "string")' \
+              <<< "$SHARE_RESPONSE" >/dev/null; then
+            echo "::error::Nextcloud did not create a public read-only APK share."
+            exit 1
+          fi
+
+          SHARE_URL="$(jq -er '.ocs.data.url' <<< "$SHARE_RESPONSE")"
+          DOWNLOAD_URL="${SHARE_URL%/}/download"
+          HTTP_STATUS="$(curl --location --silent --show-error --output /dev/null \
+            --range 0-0 --write-out '%{http_code}' "$DOWNLOAD_URL")"
+          if [[ "$HTTP_STATUS" != "200" && "$HTTP_STATUS" != "206" ]]; then
+            echo "::error::The public APK download URL returned HTTP $HTTP_STATUS."
+            exit 1
+          fi
+          echo "url=$DOWNLOAD_URL" >> "$GITHUB_OUTPUT"
+          echo "Created and verified a public read-only download for Dirigenten $VERSION."
+
       - name: Install Octopus CLI
         uses: OctopusDeploy/install-octopus-cli-action@v3
         with:
           version: latest
+
+      - name: Update Octopus Production APK URL
+        env:
+          OCTOPUS_URL: https://franky.octopus.app
+          OCTOPUS_API_KEY: ${{ secrets.OCTOPUS_API_KEY }}
+          OCTOPUS_SPACE: ${{ secrets.OCTOPUS_SPACE }}
+          APK_URL: ${{ steps.apk_share.outputs.url }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          for name in OCTOPUS_API_KEY OCTOPUS_SPACE APK_URL; do
+            if [[ -z "${!name}" ]]; then
+              echo "::error::Required setting $name is missing."
+              exit 1
+            fi
+          done
+
+          api_get() {
+            curl --fail --silent --show-error \
+              -H "X-Octopus-ApiKey: $OCTOPUS_API_KEY" \
+              -H 'Accept: application/json' "$1"
+          }
+
+          SPACES="$(api_get "$OCTOPUS_URL/api/spaces/all")"
+          SPACE_ID="$(jq -er --arg value "$OCTOPUS_SPACE" \
+            '.[] | select(.Id == $value or .Name == $value) | .Id' \
+            <<< "$SPACES" | head -n 1)"
+          PROJECTS="$(api_get "$OCTOPUS_URL/api/$SPACE_ID/projects/all")"
+          PROJECT="$(jq -cer '.[] | select(.Name == "dirigenten_application")' \
+            <<< "$PROJECTS")"
+          PROJECT_ID="$(jq -er '.Id' <<< "$PROJECT")"
+          VARIABLE_SET_ID="$(jq -er '.VariableSetId' <<< "$PROJECT")"
+          ENVIRONMENTS="$(api_get "$OCTOPUS_URL/api/$SPACE_ID/environments/all")"
+          PRODUCTION_ID="$(jq -er '.[] | select(.Name == "Production") | .Id' \
+            <<< "$ENVIRONMENTS")"
+          VARIABLES="$(api_get "$OCTOPUS_URL/api/$SPACE_ID/variables/$VARIABLE_SET_ID")"
+          VARIABLE_ID="$(jq -er --arg environment "$PRODUCTION_ID" \
+            '[.Variables[]? | select(.Name == "ApkUrl") | select((.Scope.Environment // []) | index($environment)) | .Id] | if length == 1 then .[0] else error("Expected one Production-scoped ApkUrl variable") end' \
+            <<< "$VARIABLES")"
+
+          octopus project variables update ApkUrl \
+            --project "$PROJECT_ID" \
+            --id "$VARIABLE_ID" \
+            --value "$APK_URL" \
+            --no-prompt
+          echo "Updated the Production APK URL before creating the release snapshot."
 
       - name: Create and deploy Octopus release
         env:

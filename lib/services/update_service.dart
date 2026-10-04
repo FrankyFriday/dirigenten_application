@@ -6,6 +6,15 @@ import '../services/download_service.dart';
 import '../services/signature_service.dart';
 import '../utils/logger.dart';
 
+class UpdateDownloadException implements Exception {
+  const UpdateDownloadException(this.message);
+
+  final String message;
+
+  @override
+  String toString() => message;
+}
+
 /// Kümmert sich ums Herunterladen eines per WebSocket angekündigten
 /// Releases.
 class UpdateService {

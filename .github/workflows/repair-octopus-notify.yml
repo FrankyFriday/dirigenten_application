@@ -199,7 +199,7 @@ jobs:
           echo "Updated the sensitive Production NotenServerApiKey value for $PROJECT."
 
       - name: Create a public APK download and update Octopus
-        if: inputs.project == 'musiker_application' && inputs.deploy
+        if: inputs.deploy
         env:
           NC_USER: ${{ secrets.NC_USER }}
           NC_PASS: ${{ secrets.NC_PASS }}
@@ -213,13 +213,13 @@ jobs:
             fi
           done
 
-          apk="musiker_application-$VERSION.apk"
+          apk="$PROJECT-$VERSION.apk"
           dav_root="https://cloud.notenserver.duckdns.org/remote.php/dav/files/$NC_USER"
           file_url="$dav_root/releases/$apk"
           file_status="$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' \
             --user "$NC_USER:$NC_PASS" --head "$file_url")"
           if [[ "$file_status" != "200" ]]; then
-            echo "::error::The versioned Musiker APK is not available in Nextcloud (HTTP $file_status)."
+            echo "::error::The versioned APK is not available in Nextcloud (HTTP $file_status)."
             exit 1
           fi
 
@@ -366,7 +366,7 @@ jobs:
           fi
           echo "Recreated release $VERSION with a new project-variable snapshot."
 
-      - name: Redeploy conductor release to Production
+      - name: Deploy release to Production
         if: inputs.deploy
         run: |
           octopus release deploy \
