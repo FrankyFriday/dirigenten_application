@@ -18,7 +18,7 @@ Probe ausgelegt und unterstützt helle und dunkle Darstellung.
 
 ## Zusammenspiel der Apps
 
-Die Apps verwenden `wss://ws.notenserver.duckdns.org` für die WebSocket-
+Die Apps verwenden `wss://notenserver.mattis-westerhoff.de` für die WebSocket-
 Steuerung. Beim Verbinden registriert sich die Dirigenten-App mit der Kennung
 `dirigenten_application`; der Server verwendet dafür auch die kanonische
 Kennung `dirigenten_app`.

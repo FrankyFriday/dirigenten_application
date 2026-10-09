@@ -230,7 +230,7 @@ jobs:
           done
 
           apk="$PROJECT-$VERSION.apk"
-          dav_root="https://cloud.notenserver.duckdns.org/remote.php/dav/files/$NC_USER"
+          dav_root="https://cloud.mattis-westerhoff.de/remote.php/dav/files/$NC_USER"
           file_url="$dav_root/releases/$apk"
           file_status="$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' \
             --user "$NC_USER:$NC_PASS" --head "$file_url")"
@@ -245,7 +245,7 @@ jobs:
             --data-urlencode "path=/releases/$apk" \
             --data-urlencode 'shareType=3' \
             --data-urlencode 'permissions=1' \
-            "https://cloud.notenserver.duckdns.org/ocs/v2.php/apps/files_sharing/api/v1/shares?format=json")"
+            "https://cloud.mattis-westerhoff.de/ocs/v2.php/apps/files_sharing/api/v1/shares?format=json")"
           if ! jq -e '.ocs.meta.statuscode == 200 and (.ocs.data.url | type == "string")' \
               <<< "$share_response" >/dev/null; then
             echo "::error::Nextcloud did not create a public read-only APK share."

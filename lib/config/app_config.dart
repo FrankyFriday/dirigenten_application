@@ -16,5 +16,5 @@ class AppConfig {
       value == appId || value == canonicalServerAppId;
 
   /// Domain des noten-server v2 WebSocket-Endpunkts (`wss://$wsDomain`).
-  static const String wsDomain = 'ws.notenserver.duckdns.org';
+  static const String wsDomain = 'notenserver.mattis-westerhoff.de';
 }
